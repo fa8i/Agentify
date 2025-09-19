@@ -20,14 +20,14 @@ PROVIDER_MODELS = {
     "azure": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"],
     "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"],
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
-    "gemini": ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-06-05", "gemini-2.0-flash"],
+    "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
     "anthropic": ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
     "llama": ["Llama-4-Scout-17B-16E-Instruct-FP8", "Cerebras-Llama-4-Scout-17B-16E-Instruct", "Llama-4-Maverick-17B-128E-Instruct-FP8", "Groq-Llama-4-Maverick-17B-128E-Instruct", "Llama-3.3-70B-Instruct"]
 }
 
 
 def create_agent_instance(name_val, provider_val, model_val, temperature_val, timeout_val, stream_val, selected_tools_val):
-    """Crea una nueva instancia del agente con los parámetros especificados."""
+    """Create a new agent instance with the specified parameters."""
     tools_val = selected_tools_val or []
     tools = [BUILTIN_TOOLS[t] for t in tools_val if t in BUILTIN_TOOLS]
     return BaseAgent(
@@ -44,7 +44,7 @@ def create_agent_instance(name_val, provider_val, model_val, temperature_val, ti
 
 
 def stream_response_to_chatbot(message, agent_instance, chat_history_list):
-    """Maneja el streaming de respuestas para el chatbot."""
+    """Handle response streaming for the chatbot."""
     chat_history_list = chat_history_list or []
     chat_history_list.append([message, ""])
 
@@ -62,13 +62,13 @@ def stream_response_to_chatbot(message, agent_instance, chat_history_list):
 
 
 def clear_agent_memory(agent_instance):
-    """Limpia la memoria del agente."""
+    """Clear the agent's memory."""
     if agent_instance:
         agent_instance.clear_memory()
 
 
 def update_model_dropdown(provider):
-    """Actualiza las opciones del dropdown de modelos basado en el proveedor seleccionado."""
+    """Update model dropdown options based on the selected provider."""
     models = PROVIDER_MODELS.get(provider, ["gpt-4.1-nano"])
     return gr.Dropdown(choices=models, value=models[0])
 
@@ -80,10 +80,10 @@ def build_interface():
         title="Agentify Chatbot"
     ) as demo:
         
-        # Estado del agente
+        # Agent state
         agent_state = gr.State()
         
-        # Sidebar con configuración
+        # Sidebar with settings
         with gr.Sidebar():
             
             gr.Markdown("## Model Settings:")
@@ -94,7 +94,7 @@ def build_interface():
                 value="GradioAgent"
             )
             
-            # Configuración del modelo
+            # Model configuration
             provider_input = gr.Dropdown(
                 label="Provider",
                 choices=PROVIDERS,
@@ -117,14 +117,14 @@ def build_interface():
             
             gr.Markdown("## Tools & Advanced:")
             
-            # Herramientas disponibles
+            # Available tools
             tools_checkbox_group = gr.CheckboxGroup(
                 label="Available Tools",
                 choices=list(BUILTIN_TOOLS.keys()),
                 value=["get_current_time"]
             )
             
-            # Configuración avanzada
+            # Advanced configuration
             timeout_number = gr.Number(
                 label="Timeout (seconds)",
                 value=60,
@@ -137,18 +137,18 @@ def build_interface():
                 value=True
             )
             
-            # Botones de control
+            # Control buttons
             rebuild_button = gr.Button(
-                "🔄 Create/Reset Agent",
+                "Create/Reset Agent",
                 variant="primary"
             )
             
             clear_button = gr.Button(
-                "🗑️ Clear Conversation",
+                "Clear Conversation",
                 variant="secondary"
             )
             
-            # Estado del agente
+            # Agent status
             gr.Markdown("## Agent Status:")
             agent_status = gr.Textbox(
                 label="Status",
@@ -162,7 +162,7 @@ def build_interface():
                 interactive=False
             )
         
-        # Área principal
+        # Main area
         gr.Markdown("<div style='text-align: center;'><h1>Agentify Chatbot</h1></div>")        
         
         chatbot_display = gr.Chatbot(
@@ -182,28 +182,28 @@ def build_interface():
         # --- Event Handlers ---
         
         def agent_creation_logic(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val):
-            """Crea un agente y actualiza el estado."""
+            """Create an agent and update its state."""
             try:
                 agent = create_agent_instance(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val)
-                status = f"✅ Active - {provider_val}/{model_val}"
+                status = f"Active - {provider_val}/{model_val}"
                 tools_text = ", ".join(tools_list_val) if tools_list_val else "None"
                 return agent, status, tools_text
             except Exception as e:
-                return None, f"❌ Error: {str(e)}", "None"
+                return None, f"Error: {str(e)}", "None"
 
         def handle_rebuild_click(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val):
-            """Maneja el clic del botón rebuild."""
+            """Handle rebuild button click."""
             new_agent, status, tools_text = agent_creation_logic(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val)
             return new_agent, [], "", status, tools_text
 
         def handle_send_message(user_msg, chat_hist, current_agent):
-            """Maneja el envío de mensajes."""
+            """Handle message sending."""
             if not user_msg.strip():
                 yield chat_hist or []
                 return
 
             if current_agent is None:
-                error_msg = "❌ Error: Agent not initialized. Please click 'Create/Reset Agent' first."
+                error_msg = "Error: Agent not initialized. Please click 'Create/Reset Agent' first."
                 updated_hist = (chat_hist or []) + [[user_msg, error_msg]]
                 yield updated_hist
                 return
@@ -211,12 +211,12 @@ def build_interface():
             yield from stream_response_to_chatbot(user_msg, current_agent, chat_hist)
 
         def handle_clear_conversation(current_agent):
-            """Maneja la limpieza de la conversación."""
+            """Handle clearing the conversation."""
             clear_agent_memory(current_agent)
             return [], ""
 
         def update_provider_change(provider):
-            """Actualiza el modelo cuando cambia el proveedor."""
+            """Update the model when provider changes."""
             return update_model_dropdown(provider)
 
         # --- Event Connections ---
