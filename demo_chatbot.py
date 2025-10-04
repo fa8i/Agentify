@@ -1,4 +1,9 @@
 import gradio as gr
+from agentify.memory.stores.in_memory_store import InMemoryStore  # noqa: F401
+from agentify.memory.stores.redis_store import RedisStore  # noqa: F401
+from agentify.memory.policies import MemoryPolicy
+from agentify.memory.service import MemoryService
+from agentify.memory.interfaces import MemoryAddress
 from agentify.base_agent import BaseAgent
 from agentify.client_builder import LLMClientFactory
 from agentify.prompts import assistant_prompt
@@ -14,16 +19,22 @@ BUILTIN_TOOLS = {
     "get_weather": get_weather_tool,
 }
 
-PROVIDERS = ["azure", "openai", "deepseek", "gemini", "anthropic"]
+PROVIDERS = ["azure", "openai", "deepseek", "gemini", "anthropic", "llama"]
 
 PROVIDER_MODELS = {
-    "azure": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"],
-    "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"],
+    "azure": ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
+    "openai": ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
     "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-    "anthropic": ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+    "anthropic": ["claude-opus-4-1-20250805", "claude-opus-4-20250514", "claude-sonnet-4-20250514", "cclaude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022", "claude-3-haiku-20240307"],
     "llama": ["Llama-4-Scout-17B-16E-Instruct-FP8", "Cerebras-Llama-4-Scout-17B-16E-Instruct", "Llama-4-Maverick-17B-128E-Instruct-FP8", "Groq-Llama-4-Maverick-17B-128E-Instruct", "Llama-3.3-70B-Instruct"]
 }
+
+# store = RedisStore(url="redis://localhost:6379/0")
+store = InMemoryStore()
+policy = MemoryPolicy(store, ttl_seconds=None, max_user_msgs=6, max_assistant_msgs=6)
+memory = MemoryService(store, policy)
+addr = MemoryAddress(api_version="v0", tenant_id="faBi", user_id="fa8i", conversation_id="F-481", agent_id="fa8i-assistant")
 
 
 def create_agent_instance(name_val, provider_val, model_val, temperature_val, timeout_val, stream_val, selected_tools_val):
@@ -40,6 +51,8 @@ def create_agent_instance(name_val, provider_val, model_val, temperature_val, ti
         agent_timeout=timeout_val,
         stream=stream_val,
         client_factory=LLMClientFactory(),
+        memory=memory,
+        memory_address=addr,
     )
 
 
@@ -91,7 +104,7 @@ def build_interface():
             name_input = gr.Textbox(
                 label="Agent Name",
                 placeholder="Enter agent name",
-                value="GradioAgent"
+                value="Agentify"
             )
             
             # Model configuration
@@ -104,7 +117,7 @@ def build_interface():
             model_input = gr.Dropdown(
                 label="Model",
                 choices=PROVIDER_MODELS["openai"],
-                value="gpt-4.1-nano"
+                value="gpt-4.1-mini"
             )
             
             temperature_slider = gr.Slider(
@@ -121,7 +134,7 @@ def build_interface():
             tools_checkbox_group = gr.CheckboxGroup(
                 label="Available Tools",
                 choices=list(BUILTIN_TOOLS.keys()),
-                value=["get_current_time"]
+                value=["get_current_time", "calculate_expression", "get_weather"]
             )
             
             # Advanced configuration
@@ -194,6 +207,7 @@ def build_interface():
         def handle_rebuild_click(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val):
             """Handle rebuild button click."""
             new_agent, status, tools_text = agent_creation_logic(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val)
+            clear_agent_memory(new_agent)
             return new_agent, [], "", status, tools_text
 
         def handle_send_message(user_msg, chat_hist, current_agent):
