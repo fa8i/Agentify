@@ -8,8 +8,10 @@ import uuid
 from openai import RateLimitError
 from agentify.client_builder import LLMClientFactory, LLMClientType
 
-logger = logging.getLogger(__name__)  # Configurar logger para uso en producción
+from agentify.memory.service import MemoryService
+from agentify.memory.interfaces import MemoryAddress
 
+logger = logging.getLogger(__name__)  # Production-ready logger
 
 @dataclass(slots=True)
 class Tool:
@@ -50,6 +52,9 @@ class BaseAgent:
         system_prompt: str,
         provider: str,
         model_name: str,
+        *,
+        memory: MemoryService,
+        memory_address: Optional[MemoryAddress] = None,
         client_factory: LLMClientFactory = LLMClientFactory(),
         temperature: Optional[float] = 0.7,
         tools: Optional[List[Tool]] = None,
@@ -62,90 +67,135 @@ class BaseAgent:
         self.provider = provider
         self.model_name = model_name
         self.temperature = temperature
-        self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
-        self._tool_defs = [
-            {"type": "function", "function": t.schema} for t in self._tools.values()
-        ]
-        self.stream: bool = stream
 
+        self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
+        self._tool_defs = [{"type": "function", "function": t.schema} for t in self._tools.values()]
+        
+        self.stream: bool = stream
+        
         self.client: LLMClientType = client_factory.create_client(
             provider=self.provider,
             config_override=client_config_override,
             timeout=agent_timeout,
         )
-        self._history: List[Dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt}
-        ]
 
-    @property
-    def history(self) -> List[Dict[str, Any]]:
-        """Devuelve una copia del historial de conversación."""
-        return list(self._history)
+        self.memory: MemoryService = memory
+        self.memory_address: Optional[MemoryAddress] = memory_address
+
+    # Memory helpers
+
+    def _addr_or_raise(self, addr: Optional[MemoryAddress]) -> MemoryAddress:
+        """
+        Ensure we have a MemoryAddress to operate on (either per-call or default).
+        """
+        effective = addr or self.memory_address
+        if effective is None:
+            raise ValueError(
+                "MemoryAddress requerido: pásalo en el constructor (memory_address=...) "
+                "o en cada llamada (addr=...)."
+            )
+        return effective
+
+    def _ensure_system_initialized(self, addr: MemoryAddress) -> None:
+        """
+        Ensure the system message is present exactly once at the beginning
+        for the given MemoryAddress.
+        """
+        history = self.memory.get_history(addr)
+        if not history or history[0].get("role") != "system":
+            self.memory.append_history(addr, {"role": "system", "content": self.system_prompt})
+
+    # Public surface
+
+    def get_history(self, addr: MemoryAddress) -> List[Dict[str, Any]]:
+        """
+        Return current conversation history (OpenAI message shape) for this address.
+        """
+        return self.memory.get_history(addr)
 
     @property
     def list_tools(self) -> List[str]:
-        """Devuelve los nombres de las herramientas registradas."""
+        """Return the names of registered tools."""
         return list(self._tools.keys())
 
-    def add(self, role: str, content: Optional[str] = None, **kwargs: Any) -> None:
-        """Añade un mensaje al historial de conversación."""
+    def add(self, role: str, content: Optional[Union[str, List[Dict[str, Any]]]] = None,
+            *, addr: Optional[MemoryAddress] = None, **kwargs: Any) -> None:
+        """
+        Append a message to memory at the provided address.
+
+        Note:
+            - kwargs may include tool_calls, tool_call_id, name (role 'tool'), etc.
+            - content can be text or multimodal payload (list of parts).
+        """
+        a = self._addr_or_raise(addr)
         msg: Dict[str, Any] = {"role": role}
         if content is not None:
             msg["content"] = content
+        msg.update(kwargs)
+        self.memory.append_history(a, msg)
 
-        msg.update(kwargs)  # Usado para tool_calls, tool_call_id, name (rol 'tool')
-        self._history.append(msg)
+    def clear_memory(self, *, addr: Optional[MemoryAddress] = None) -> None:
+        """
+        Reset history for the provided address to the initial system prompt only.
+        """
+        a = self._addr_or_raise(addr)
+        self.memory.reset_history(a, {"role": "system", "content": self.system_prompt})
 
-    def clear_memory(self) -> None:
-        """Reinicia el historial al prompt del sistema inicial."""
-        self._history = [{"role": "system", "content": self.system_prompt}]
-
-    def save_history(self, path: str) -> None:
-        """Guarda el historial en un archivo JSON."""
+    def save_history(self, path: str, *, addr: Optional[MemoryAddress] = None) -> None:
+        """
+        Persist current history to a local JSON file (export utility).
+        """
+        a = self._addr_or_raise(addr)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(self._history, f, ensure_ascii=False, indent=2)
+            json.dump(self.memory.get_history(a), f, ensure_ascii=False, indent=2)
 
-    def load_history(self, path: str) -> None:
-        """Carga el historial desde un archivo JSON."""
+    def load_history(self, path: str, *, addr: Optional[MemoryAddress] = None) -> None:
+        """
+        Load a previously exported JSON history into this address (import utility).
+        Replaces the entire history.
+        """
+        a = self._addr_or_raise(addr)
         with open(path, "r", encoding="utf-8") as f:
-            self._history = json.load(f)
+            raw: List[Dict[str, Any]] = json.load(f)
 
-    def _completion(self) -> Union[Any, Generator[Dict[str, Any], None, None]]:
-        """Realiza la llamada al LLM, con reintentos y manejo de errores."""
+        if raw and raw[0].get("role") == "system":
+            messages = raw
+        else:
+            messages = [{"role": "system", "content": self.system_prompt}] + raw
+
+        self.memory.reset_history(a, messages[0])
+        for m in messages[1:]:
+            self.memory.append_history(a, m)
+
+    def _completion(self, *, addr: MemoryAddress) -> Union[Any, Generator[Dict[str, Any], None, None]]:
+        """
+        Perform the LLM call with retries and error handling.
+        Always pulls messages from the external memory for the given address.
+        """
         tool_choice_param = "auto" if self._tool_defs else None
         common_params: Dict[str, Any] = {
             "model": self.model_name,
-            "messages": self._history,
+            "messages": self.memory.get_history(addr),
             "temperature": self.temperature,
         }
-        if self._tool_defs:  # Solo añadir tools y tool_choice si hay herramientas
+        if self._tool_defs:
             common_params["tools"] = self._tool_defs
             common_params["tool_choice"] = tool_choice_param
 
         for attempt in range(self.RETRIES):
             try:
                 if self.stream:
-                    return self.client.chat.completions.create(
-                        **common_params, stream=True
-                    )
-                response = self.client.chat.completions.create(
-                    **common_params, stream=False
-                )
+                    return self.client.chat.completions.create(**common_params, stream=True)
+                response = self.client.chat.completions.create(**common_params, stream=False)
                 if response.choices and len(response.choices) > 0:
                     return response.choices[0].message
-                raise ValueError(
-                    "La respuesta de la API no contenía 'choices' válidos."
-                )
+                raise ValueError("La respuesta de la API no contenía 'choices' válidos.")
             except RateLimitError:
                 if attempt == self.RETRIES - 1:
-                    logger.error(
-                        "Límite de tasa de API alcanzado después de reintentos."
-                    )
+                    logger.error("Límite de tasa de API alcanzado después de reintentos.")
                     raise
                 sleep_time = 2**attempt
-                logger.warning(
-                    f"Límite de tasa alcanzado. Reintentando en {sleep_time}s..."
-                )
+                logger.warning(f"Límite de tasa alcanzado. Reintentando en {sleep_time}s...")
                 time.sleep(sleep_time)
             except Exception as e:
                 logger.error(
@@ -156,66 +206,67 @@ class BaseAgent:
                     raise
                 time.sleep(2**attempt)
 
-        msg = f"La completación del LLM ({self.client.__class__.__name__}) falló después de {self.RETRIES} reintentos."
+        msg = f"LLM completions ({self.client.__class__.__name__}) failed after {self.RETRIES} retries."
         logger.critical(msg)
         raise RuntimeError(msg)
 
     def _split_concatenated_json_objects(self, json_string: str) -> List[str]:
-        """Intenta dividir una cadena que puede contener múltiples JSONs concatenados."""
+        """
+        Attempt to split a string that may contain multiple concatenated JSON objects.
+        """
         objects_str: List[str] = []
         decoder = json.JSONDecoder()
-        original_string_trimmed = json_string.strip()
+        s = json_string.strip()
         pos = 0
 
-        if not original_string_trimmed:
+        if not s:
             return []
         try:
-            json.loads(original_string_trimmed)
-            return [original_string_trimmed]  # Es un JSON único válido
+            json.loads(s)
+            return [s]  # single valid JSON
         except json.JSONDecodeError:
-            pass  # No es un JSON único, intentar dividir
+            pass
 
-        while pos < len(original_string_trimmed):
+        while pos < len(s):
             try:
-                _, consumed_chars = decoder.raw_decode(original_string_trimmed[pos:])
-                objects_str.append(original_string_trimmed[pos : pos + consumed_chars])
-                pos += consumed_chars
-                while (
-                    pos < len(original_string_trimmed)
-                    and original_string_trimmed[pos].isspace()
-                ):
+                _, consumed = decoder.raw_decode(s[pos:])
+                objects_str.append(s[pos: pos + consumed])
+                pos += consumed
+                while pos < len(s) and s[pos].isspace():
                     pos += 1
             except json.JSONDecodeError:
-                if not objects_str:  # No se pudo parsear nada desde el inicio
+                if not objects_str:
                     logger.warning(f"No se pudo decodificar JSON de: '{json_string}'")
-                    return [
-                        json_string
-                    ]  # Devolver original para que falle el parseo más adelante
+                    return [json_string]
                 logger.warning(
-                    f"Agente '{self.name}': No se pudo decodificar más JSON en la posición {pos} de '{original_string_trimmed}'. Objetos parseados: {len(objects_str)}."
+                    f"Agente '{self.name}': no se pudo decodificar más JSON en la posición {pos} "
+                    f"de '{s}'. Objetos parseados: {len(objects_str)}."
                 )
                 break
         return objects_str if objects_str else [json_string]
 
-    def _process_agent_logic(self, user_input: str) -> Generator[str, None, None]:
-        """Generador interno que maneja la lógica del agente y la interacción con el LLM."""
-        self.add(role="user", content=user_input)
+    def _process_agent_logic(self, user_input: str, *, addr: MemoryAddress) -> Generator[str, None, None]:
+        """
+        Internal generator that orchestrates the agent logic and the LLM interaction
+        (tools, streaming/non-streaming, multi-part tool args handling).
+        """
+        # Ensure system is initialized once per address, then append user input.
+        self._ensure_system_initialized(addr)
+        self.add(role="user", content=user_input, addr=addr)
 
+        # Tool-calling loop
         for iteration_count in range(self.MAX_TOOL_ITER):
-            response_or_stream = self._completion()
+            response_or_stream = self._completion(addr=addr)
 
             current_turn_content_parts: List[str] = []
             assembled_tool_calls: List[Dict[str, Any]] = []
 
             if self.stream:
-                if not (
-                    hasattr(response_or_stream, "__iter__")
-                    and hasattr(response_or_stream, "__next__")
-                ):
+                # Streaming mode expects an iterator of deltas
+                if not (hasattr(response_or_stream, "__iter__") and hasattr(response_or_stream, "__next__")):
                     raise TypeError(
                         f"Se esperaba un iterador en modo streaming, se obtuvo {type(response_or_stream)}."
                     )
-
                 tool_call_assembler: Dict[int, Dict[str, Any]] = {}
                 for chunk in response_or_stream:  # type: ignore[union-attr]
                     if not chunk.choices:
@@ -240,40 +291,31 @@ class BaseAgent:
                                 call_data["id"] = tc_delta.id
                             if tc_delta.function:
                                 if tc_delta.function.name:
-                                    call_data["function"]["name"] = (
-                                        tc_delta.function.name
-                                    )
+                                    call_data["function"]["name"] = tc_delta.function.name
                                 if tc_delta.function.arguments:
-                                    call_data["function"]["arguments"] += (
-                                        tc_delta.function.arguments
-                                    )
+                                    call_data["function"]["arguments"] += tc_delta.function.arguments
+
                 for idx in sorted(tool_call_assembler.keys()):
                     call_data = tool_call_assembler[idx]
                     if not call_data.get("id"):
-                        call_data["id"] = (
-                            f"s_{self.provider[:3]}_tc_{iteration_count}_{idx}_{uuid.uuid4().hex[:6]}"
-                        )
+                        call_data["id"] = f"s_{self.provider[:3]}_tc_{iteration_count}_{idx}_{uuid.uuid4().hex[:6]}"
                     if call_data.get("function", {}).get("name"):
                         assembled_tool_calls.append(call_data)
-            else:  # Modo no-streaming
-                msg_object = response_or_stream  # Es un objeto Message (o similar)
-                if not (
-                    hasattr(msg_object, "content") or hasattr(msg_object, "tool_calls")
-                ):
+            else:
+                # Non-streaming: the SDK returns a Message-like object
+                msg_object = response_or_stream
+                if not (hasattr(msg_object, "content") or hasattr(msg_object, "tool_calls")):
                     raise TypeError(
                         f"Se esperaba un objeto Message en modo no-streaming, se obtuvo {type(msg_object)}"
                     )
 
-                if msg_object.content:  # type: ignore[union-attr]
-                    yield msg_object.content  # type: ignore[union-attr]
-                    current_turn_content_parts.append(msg_object.content)  # type: ignore[union-attr]
+                if getattr(msg_object, "content", None):
+                    yield msg_object.content
+                    current_turn_content_parts.append(msg_object.content)
 
-                if msg_object.tool_calls:  # type: ignore[union-attr]
-                    for i, tc in enumerate(msg_object.tool_calls):  # type: ignore[union-attr]
-                        tc_id = (
-                            tc.id
-                            or f"ns_{self.provider[:3]}_tc_{iteration_count}_{i}_{uuid.uuid4().hex[:6]}"
-                        )
+                if getattr(msg_object, "tool_calls", None):
+                    for i, tc in enumerate(msg_object.tool_calls):
+                        tc_id = tc.id or f"ns_{self.provider[:3]}_tc_{iteration_count}_{i}_{uuid.uuid4().hex[:6]}"
                         assembled_tool_calls.append(
                             {
                                 "id": tc_id,
@@ -285,13 +327,11 @@ class BaseAgent:
                             }
                         )
 
-            # Procesamiento de Tool Calls (común para stream y no-stream)
+            # Expand tool calls in case the model concatenated multiple JSON args
             expanded_tool_calls: List[Dict[str, Any]] = []
             if assembled_tool_calls:
                 for tc_original in assembled_tool_calls:
-                    tool_name = tc_original.get("function", {}).get(
-                        "name", "unknown_tool"
-                    )
+                    tool_name = tc_original.get("function", {}).get("name", "unknown_tool")
                     args_value = tc_original.get("function", {}).get("arguments")
                     if args_value is None:
                         args_str = ""
@@ -299,9 +339,7 @@ class BaseAgent:
                         args_str = args_value
                     else:
                         args_str = json.dumps(args_value)
-                    original_id = tc_original.get(
-                        "id", f"gen_id_{uuid.uuid4().hex[:4]}"
-                    )
+                    original_id = tc_original.get("id", f"gen_id_{uuid.uuid4().hex[:4]}")
 
                     if not args_str.strip():
                         tc_original["function"]["arguments"] = "{}"
@@ -309,45 +347,38 @@ class BaseAgent:
                         continue
 
                     split_args_json = self._split_concatenated_json_objects(args_str)
-
                     if len(split_args_json) > 1:
                         for i, single_arg_json in enumerate(split_args_json):
                             expanded_tool_calls.append(
                                 {
                                     "id": f"{original_id}_part_{i}",
                                     "type": "function",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": single_arg_json,
-                                    },
+                                    "function": {"name": tool_name, "arguments": single_arg_json},
                                 }
                             )
                     elif len(split_args_json) == 1:
                         tc_original["function"]["arguments"] = split_args_json[0]
                         expanded_tool_calls.append(tc_original)
-                    elif (
-                        not split_args_json and args_str.strip()
-                    ):  # No se pudo splitear el contenido
-                        expanded_tool_calls.append(
-                            tc_original
-                        )  # Añadir original para posible fallo posterior
+                    elif not split_args_json and args_str.strip():
+                        expanded_tool_calls.append(tc_original)
 
             assembled_tool_calls = expanded_tool_calls
-
             full_turn_content = "".join(current_turn_content_parts)
 
+            # If no tool calls, finalize by appending assistant content and exit
             if not assembled_tool_calls:
                 if full_turn_content:
-                    self.add(role="assistant", content=full_turn_content)
-                break  # Fin de la interacción si no hay más herramientas que llamar
+                    self.add(role="assistant", content=full_turn_content, addr=addr)
+                break
 
-            # Hay herramientas: añadir mensaje del asistente y ejecutar herramientas
+            # Append assistant message including tool_calls
             assistant_msg: Dict[str, Any] = {"role": "assistant"}
             if full_turn_content:
                 assistant_msg["content"] = full_turn_content
             assistant_msg["tool_calls"] = assembled_tool_calls
-            self.add(**assistant_msg)
+            self.add(addr=addr, **assistant_msg)
 
+            # Execute tools and append their outputs
             for tc_to_run in assembled_tool_calls:
                 tool_name = tc_to_run["function"]["name"]
                 tool_call_id = tc_to_run["id"]
@@ -355,9 +386,7 @@ class BaseAgent:
                 result_content: str
 
                 if not tool:
-                    result_content = json.dumps(
-                        {"error": f"La herramienta '{tool_name}' no está registrada."}
-                    )
+                    result_content = json.dumps({"error": f"La herramienta '{tool_name}' no está registrada."})
                 else:
                     try:
                         tool_args_val = tc_to_run["function"].get("arguments")
@@ -376,20 +405,11 @@ class BaseAgent:
                             f"Argumentos JSON inválidos para '{tool_name}': {exc}. Recibido: '{tool_args_str}'"
                         )
                         result_content = json.dumps(
-                            {
-                                "error": f"Argumentos JSON inválidos para '{tool_name}': {exc}. Recibido: '{tool_args_str}'"
-                            }
+                            {"error": f"Argumentos JSON inválidos para '{tool_name}': {exc}. Recibido: '{tool_args_str}'"}
                         )
-                    except Exception as e:  # Otros errores preparando la llamada
-                        logger.error(
-                            f"Error inesperado preparando herramienta '{tool_name}': {e}",
-                            exc_info=True,
-                        )
-                        result_content = json.dumps(
-                            {
-                                "error": f"Error inesperado preparando herramienta '{tool_name}': {e}"
-                            }
-                        )
+                    except Exception as e:
+                        logger.error(f"Error inesperado preparando herramienta '{tool_name}': {e}", exc_info=True)
+                        result_content = json.dumps({"error": f"Error inesperado preparando herramienta '{tool_name}': {e}"})
                     else:
                         result_content = tool(**parsed_args)
 
@@ -397,44 +417,55 @@ class BaseAgent:
                     role="tool",
                     content=result_content,
                     tool_call_id=tool_call_id,
-                    name=tool_name,  # OpenAI espera 'name' para el rol 'tool'
+                    name=tool_name,  # OpenAI expects 'name' for role 'tool'
+                    addr=addr,
                 )
-        else:  # Se alcanzó MAX_TOOL_ITER
+        else:
             warn_msg = f"\n[ADVERTENCIA] Agente '{self.name}' alcanzó el máximo de {self.MAX_TOOL_ITER} iteraciones de herramientas.\n"
             logger.warning(warn_msg.strip())
             yield warn_msg
 
-    def respond(self, user_input: str) -> Union[str, Generator[str, None, None]]:
+    # -------------------------
+    # Public entrypoint
+    # -------------------------
+
+    def respond(self, user_input: str, *, addr: Optional[MemoryAddress] = None) -> Union[str, Generator[str, None, None]]:
         """
-        Método principal para interactuar con el agente.
-        Devuelve un generador de strings si self.stream es True, o un string completo si self.stream es False.
+        Main entrypoint to interact with the agent.
+
+        Behavior:
+            - Requires a MemoryAddress (either provided here or set at construction).
+            - Ensures the system message is present once for that address.
+            - Streams if configured, otherwise returns a full concatenated string.
         """
-        response_generator = self._process_agent_logic(user_input)
+        a = self._addr_or_raise(addr)
+        response_generator = self._process_agent_logic(user_input, addr=a)
 
         if self.stream:
             return response_generator
 
-        # Consumir generador para respuesta no-stream
-        accumulated_parts: List[str] = list(response_generator)
-        return "".join(accumulated_parts).strip()
+        parts: List[str] = list(response_generator)
+        return "".join(parts).strip()
+
+    # -------------------------
+    # Tool registry management
+    # -------------------------
 
     def tool_exists(self, name: str) -> bool:
-        """Verifica si una herramienta está registrada."""
+        """Check whether a tool is registered."""
         return name in self._tools
 
     def unregister_tool(self, name: str) -> bool:
-        """Elimina una herramienta. Devuelve True si se eliminó, False si no."""
+        """Unregister a tool. Returns True if removed, False if missing."""
         if name not in self._tools:
             return False
         self._tools.pop(name)
         self._tool_defs = [d for d in self._tool_defs if d["function"]["name"] != name]
         return True
 
-    def register_tool(self, tool: Tool) -> None:
-        """Registra una herramienta, reemplazando si ya existe una con el mismo nombre."""
-        if self.tool_exists(
-            tool.name
-        ):  # Des-registrar para evitar duplicados en _tool_defs
+    def register_tool(self, tool: "Tool") -> None:
+        """Register (or replace) a tool, keeping _tool_defs consistent."""
+        if self.tool_exists(tool.name):
             self.unregister_tool(tool.name)
         self._tools[tool.name] = tool
         self._tool_defs.append({"type": "function", "function": tool.schema})
