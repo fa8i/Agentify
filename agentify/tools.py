@@ -1,4 +1,4 @@
-from agentify.base_agent import Tool
+from agentify.base_tool import Tool
 import datetime
 import ast
 import operator as op
@@ -53,6 +53,7 @@ def get_current_time():
     now = datetime.datetime.now().astimezone().isoformat()
     return {"current_time": now}
 
+
 _allowed_ops = {
     ast.Add: op.add,
     ast.Sub: op.sub,
@@ -63,6 +64,7 @@ _allowed_ops = {
     ast.UAdd: op.pos,
     ast.USub: op.neg,
 }
+
 
 def _eval_node(node):
     if isinstance(node, ast.Num):
@@ -76,13 +78,15 @@ def _eval_node(node):
         return _allowed_ops[type(node.op)](operand)
     raise ValueError(f"Operador no permitido: {node}")
 
+
 def calculate_expression(expression: str):
     try:
-        tree = ast.parse(expression, mode='eval').body
+        tree = ast.parse(expression, mode="eval").body
         result = _eval_node(tree)
         return {"result": result}
     except Exception as e:
         return {"error": f"Expresión inválida: {e}"}
+
 
 def get_weather(location: str):
     api_key = os.getenv("OPENWEATHER_API_KEY")
@@ -91,17 +95,19 @@ def get_weather(location: str):
     try:
         response = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
-            params={"q": location, "appid": api_key, "units": "metric"}
+            params={"q": location, "appid": api_key, "units": "metric"},
         )
         data = response.json()
         if response.status_code != 200:
-            return {"error": data.get("message", "Error desconocido al obtener el clima.")}
+            return {
+                "error": data.get("message", "Error desconocido al obtener el clima.")
+            }
         weather = {
             "location": data["name"],
             "description": data["weather"][0]["description"],
             "temperature": data["main"]["temp"],
             "humidity": data["main"]["humidity"],
-            "wind_speed": data["wind"]["speed"]
+            "wind_speed": data["wind"]["speed"],
         }
         return {"weather": weather}
     except Exception as e:
@@ -112,8 +118,4 @@ get_current_time_tool = Tool(get_current_time_schema, get_current_time)
 calculate_expression_tool = Tool(calculate_expression_schema, calculate_expression)
 get_weather_tool = Tool(get_weather_schema, get_weather)
 
-tools = [
-    get_current_time_tool, 
-    calculate_expression_tool, 
-    get_weather_tool
-    ]
+tools = [get_current_time_tool, calculate_expression_tool, get_weather_tool]

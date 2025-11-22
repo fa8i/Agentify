@@ -26,18 +26,45 @@ PROVIDER_MODELS = {
     "openai": ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
     "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-    "anthropic": ["claude-opus-4-1-20250805", "claude-opus-4-20250514", "claude-sonnet-4-20250514", "cclaude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022", "claude-3-haiku-20240307"],
-    "llama": ["Llama-4-Scout-17B-16E-Instruct-FP8", "Cerebras-Llama-4-Scout-17B-16E-Instruct", "Llama-4-Maverick-17B-128E-Instruct-FP8", "Groq-Llama-4-Maverick-17B-128E-Instruct", "Llama-3.3-70B-Instruct"]
+    "anthropic": [
+        "claude-opus-4-1-20250805",
+        "claude-opus-4-20250514",
+        "claude-sonnet-4-20250514",
+        "cclaude-3-7-sonnet-20250219",
+        "claude-3-5-haiku-20241022",
+        "claude-3-haiku-20240307",
+    ],
+    "llama": [
+        "Llama-4-Scout-17B-16E-Instruct-FP8",
+        "Cerebras-Llama-4-Scout-17B-16E-Instruct",
+        "Llama-4-Maverick-17B-128E-Instruct-FP8",
+        "Groq-Llama-4-Maverick-17B-128E-Instruct",
+        "Llama-3.3-70B-Instruct",
+    ],
 }
 
 # store = RedisStore(url="redis://localhost:6379/0")
 store = InMemoryStore()
 policy = MemoryPolicy(store, ttl_seconds=None, max_user_msgs=6, max_assistant_msgs=6)
 memory = MemoryService(store, policy)
-addr = MemoryAddress(api_version="v0", tenant_id="faBi", user_id="fa8i", conversation_id="F-481", agent_id="fa8i-assistant")
+addr = MemoryAddress(
+    api_version="v0",
+    tenant_id="faBi",
+    user_id="fa8i",
+    conversation_id="F-481",
+    agent_id="fa8i-assistant",
+)
 
 
-def create_agent_instance(name_val, provider_val, model_val, temperature_val, timeout_val, stream_val, selected_tools_val):
+def create_agent_instance(
+    name_val,
+    provider_val,
+    model_val,
+    temperature_val,
+    timeout_val,
+    stream_val,
+    selected_tools_val,
+):
     """Create a new agent instance with the specified parameters."""
     tools_val = selected_tools_val or []
     tools = [BUILTIN_TOOLS[t] for t in tools_val if t in BUILTIN_TOOLS]
@@ -56,21 +83,51 @@ def create_agent_instance(name_val, provider_val, model_val, temperature_val, ti
     )
 
 
-def stream_response_to_chatbot(message, agent_instance, chat_history_list):
-    """Handle response streaming for the chatbot."""
+def stream_response_to_chatbot(
+    message, agent_instance, chat_history_list, image_path=None
+):
+    """Handle response streaming for the chatbot (optionally with an image)."""
     chat_history_list = chat_history_list or []
-    chat_history_list.append([message, ""])
 
-    response_stream = agent_instance.respond(message)
+    if image_path:
+        msg_user_img = gr.ChatMessage(
+            role="user",
+            content=gr.Image(
+                value=image_path,
+                show_download_button=False,
+                show_fullscreen_button=True,
+            ),
+        )
+        chat_history_list.append(msg_user_img)
+
+    if message and message.strip():
+        msg_user_text = gr.ChatMessage(
+            role="user",
+            content=message,
+        )
+        chat_history_list.append(msg_user_text)
+
+    placeholder = gr.ChatMessage(
+        role="assistant",
+        content="⏳ Generating response…",
+    )
+    chat_history_list.append(placeholder)
+
+    yield chat_history_list
+
+    try:
+        response_stream = agent_instance.respond(message, image_path=image_path)
+    except TypeError:
+        response_stream = agent_instance.respond(message)
 
     if isinstance(response_stream, str):
-        chat_history_list[-1][1] = response_stream
+        placeholder.content = response_stream
         yield chat_history_list
     else:
         full_response = ""
         for chunk in response_stream:
             full_response += chunk
-            chat_history_list[-1][1] = full_response
+            placeholder.content = full_response
             yield chat_history_list
 
 
@@ -87,182 +144,243 @@ def update_model_dropdown(provider):
 
 
 def build_interface():
-    with gr.Blocks(
-        fill_height=True,
-        fill_width=True,
-        title="Agentify Chatbot"
-    ) as demo:
-        
+    with gr.Blocks(fill_height=True, fill_width=True, title="Agentify Chatbot") as demo:
         # Agent state
         agent_state = gr.State()
-        
+
         # Sidebar with settings
         with gr.Sidebar():
-            
             gr.Markdown("## Model Settings:")
 
             name_input = gr.Textbox(
-                label="Agent Name",
-                placeholder="Enter agent name",
-                value="Agentify"
+                label="Agent Name", placeholder="Enter agent name", value="Agentify"
             )
-            
+
             # Model configuration
             provider_input = gr.Dropdown(
-                label="Provider",
-                choices=PROVIDERS,
-                value="openai"
+                label="Provider", choices=PROVIDERS, value="openai"
             )
-            
+
             model_input = gr.Dropdown(
-                label="Model",
-                choices=PROVIDER_MODELS["openai"],
-                value="gpt-4.1-mini"
+                label="Model", choices=PROVIDER_MODELS["openai"], value="gpt-4.1-mini"
             )
-            
+
             temperature_slider = gr.Slider(
-                minimum=0,
-                maximum=1,
-                value=0.7,
-                step=0.05,
-                label="Temperature"
+                minimum=0, maximum=1, value=0.7, step=0.05, label="Temperature"
             )
-            
+
             gr.Markdown("## Tools & Advanced:")
-            
+
             # Available tools
             tools_checkbox_group = gr.CheckboxGroup(
                 label="Available Tools",
                 choices=list(BUILTIN_TOOLS.keys()),
-                value=["get_current_time", "calculate_expression", "get_weather"]
+                value=["get_current_time", "calculate_expression", "get_weather"],
             )
-            
+
             # Advanced configuration
             timeout_number = gr.Number(
-                label="Timeout (seconds)",
-                value=60,
-                minimum=1,
-                maximum=300
+                label="Timeout (seconds)", value=60, minimum=1, maximum=300
             )
-            
-            stream_checkbox = gr.Checkbox(
-                label="Stream Responses",
-                value=True
-            )
-            
+
+            stream_checkbox = gr.Checkbox(label="Stream Responses", value=True)
+
             # Control buttons
-            rebuild_button = gr.Button(
-                "Create/Reset Agent",
-                variant="primary"
-            )
-            
-            clear_button = gr.Button(
-                "Clear Conversation",
-                variant="secondary"
-            )
-            
+            rebuild_button = gr.Button("Create/Reset Agent", variant="primary")
+
+            clear_button = gr.Button("Clear Conversation", variant="secondary")
+
             # Agent status
             gr.Markdown("## Agent Status:")
             agent_status = gr.Textbox(
-                label="Status",
-                value="Not Initialized",
-                interactive=False
+                label="Status", value="Not Initialized", interactive=False
             )
-            
+
             active_tools = gr.Textbox(
-                label="Active Tools",
-                value="None",
-                interactive=False
+                label="Active Tools", value="None", interactive=False
             )
-        
+
         # Main area
-        gr.Markdown("<div style='text-align: center;'><h1>Agentify Chatbot</h1></div>")        
-        
+        gr.Markdown("<div style='text-align: center;'><h1>Agentify Chatbot</h1></div>")
+
         chatbot_display = gr.Chatbot(
             scale=1,
             label="Conversation",
-            bubble_full_width=False,
             group_consecutive_messages=False,
-            height=500
+            height=500,
+            type="messages",
         )
-        
-        message_input = gr.Textbox(
+
+        message_input = gr.MultimodalTextbox(
             show_label=False,
-            placeholder="Type your message here and press Enter...",
-            submit_btn=True
+            placeholder="Type your message here or upload an image...",
+            submit_btn=True,
+            interactive=True,
+            file_types=["image"],
+            file_count="single",
+            max_plain_text_length=100000,
         )
 
         # --- Event Handlers ---
-        
-        def agent_creation_logic(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val):
+
+        def agent_creation_logic(
+            name_val,
+            provider_val,
+            model_val,
+            temp_val,
+            time_val,
+            stream_val,
+            tools_list_val,
+        ):
             """Create an agent and update its state."""
             try:
-                agent = create_agent_instance(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val)
+                agent = create_agent_instance(
+                    name_val,
+                    provider_val,
+                    model_val,
+                    temp_val,
+                    time_val,
+                    stream_val,
+                    tools_list_val,
+                )
                 status = f"Active - {provider_val}/{model_val}"
                 tools_text = ", ".join(tools_list_val) if tools_list_val else "None"
                 return agent, status, tools_text
             except Exception as e:
                 return None, f"Error: {str(e)}", "None"
 
-        def handle_rebuild_click(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val):
+        def handle_rebuild_click(
+            name_val,
+            provider_val,
+            model_val,
+            temp_val,
+            time_val,
+            stream_val,
+            tools_list_val,
+        ):
             """Handle rebuild button click."""
-            new_agent, status, tools_text = agent_creation_logic(name_val, provider_val, model_val, temp_val, time_val, stream_val, tools_list_val)
+            new_agent, status, tools_text = agent_creation_logic(
+                name_val,
+                provider_val,
+                model_val,
+                temp_val,
+                time_val,
+                stream_val,
+                tools_list_val,
+            )
             clear_agent_memory(new_agent)
-            return new_agent, [], "", status, tools_text
+            return new_agent, [], {"text": "", "files": []}, status, tools_text
 
-        def handle_send_message(user_msg, chat_hist, current_agent):
-            """Handle message sending."""
-            if not user_msg.strip():
+        def handle_send_message(inputs, chat_hist, current_agent):
+            """Handle message sending with optional image from MultimodalTextbox."""
+            inputs = inputs or {}
+            text = inputs.get("text", "") or ""
+            files = inputs.get("files", []) or []
+
+            image_path_for_agent = files[0] if files else None
+
+            if not text.strip() and not image_path_for_agent:
                 yield chat_hist or []
                 return
 
             if current_agent is None:
                 error_msg = "Error: Agent not initialized. Please click 'Create/Reset Agent' first."
-                updated_hist = (chat_hist or []) + [[user_msg, error_msg]]
-                yield updated_hist
+                chat_history = chat_hist or []
+
+                if image_path_for_agent:
+                    chat_history.append(
+                        gr.ChatMessage(
+                            role="user",
+                            content=gr.Image(
+                                value=image_path_for_agent,
+                                show_download_button=False,
+                                show_fullscreen_button=True,
+                            ),
+                        )
+                    )
+                if text.strip():
+                    chat_history.append(
+                        gr.ChatMessage(
+                            role="user",
+                            content=text,
+                        )
+                    )
+
+                chat_history.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=error_msg,
+                    )
+                )
+                yield chat_history
                 return
 
-            yield from stream_response_to_chatbot(user_msg, current_agent, chat_hist)
+            yield from stream_response_to_chatbot(
+                text,
+                current_agent,
+                chat_hist,
+                image_path=image_path_for_agent,
+            )
 
         def handle_clear_conversation(current_agent):
             """Handle clearing the conversation."""
             clear_agent_memory(current_agent)
-            return [], ""
+            return [], {"text": "", "files": []}
 
         def update_provider_change(provider):
             """Update the model when provider changes."""
             return update_model_dropdown(provider)
 
         # --- Event Connections ---
-        
+
         provider_input.change(
-            update_provider_change,
-            inputs=[provider_input],
-            outputs=[model_input]
+            update_provider_change, inputs=[provider_input], outputs=[model_input]
         )
-        
+
         demo.load(
             agent_creation_logic,
-            inputs=[name_input, provider_input, model_input, temperature_slider, timeout_number, stream_checkbox, tools_checkbox_group],
-            outputs=[agent_state, agent_status, active_tools]
+            inputs=[
+                name_input,
+                provider_input,
+                model_input,
+                temperature_slider,
+                timeout_number,
+                stream_checkbox,
+                tools_checkbox_group,
+            ],
+            outputs=[agent_state, agent_status, active_tools],
         )
 
         rebuild_button.click(
             handle_rebuild_click,
-            inputs=[name_input, provider_input, model_input, temperature_slider, timeout_number, stream_checkbox, tools_checkbox_group],
-            outputs=[agent_state, chatbot_display, message_input, agent_status, active_tools]
+            inputs=[
+                name_input,
+                provider_input,
+                model_input,
+                temperature_slider,
+                timeout_number,
+                stream_checkbox,
+                tools_checkbox_group,
+            ],
+            outputs=[
+                agent_state,
+                chatbot_display,
+                message_input,
+                agent_status,
+                active_tools,
+            ],
         )
 
         message_input.submit(
             handle_send_message,
             inputs=[message_input, chatbot_display, agent_state],
-            outputs=[chatbot_display]
-        ).then(lambda: "", outputs=[message_input])
+            outputs=[chatbot_display],
+        ).then(lambda: {"text": "", "files": []}, outputs=[message_input])
 
         clear_button.click(
             handle_clear_conversation,
             inputs=[agent_state],
-            outputs=[chatbot_display, message_input]
+            outputs=[chatbot_display, message_input],
         )
 
     return demo
@@ -270,8 +388,4 @@ def build_interface():
 
 if __name__ == "__main__":
     interface = build_interface()
-    interface.launch(
-        share=False,
-        inbrowser=True,
-        show_error=True
-    )
+    interface.launch(share=False, inbrowser=True, show_error=True)
