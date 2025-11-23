@@ -1,9 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
+# Set PYTHONPATH to project root (two levels up from this script)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+
 REDIS_SERVICE_NAME="redis-server"
 REDIS_DAEMON_CMD="redis-server --daemonize yes"
-CHATBOT_SCRIPT="demo_chatbot.py"
+CHATBOT_SCRIPT="app.py"
 
 # Logging
 log()  { echo -e "\033[1;34m[INFO]\033[0m  $1"; }   # Blue

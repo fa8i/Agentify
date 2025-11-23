@@ -4,11 +4,10 @@ from agentify.memory.stores.redis_store import RedisStore  # noqa: F401
 from agentify.memory.policies import MemoryPolicy
 from agentify.memory.service import MemoryService
 from agentify.memory.interfaces import MemoryAddress
-from agentify.base_agent import BaseAgent
-from agentify.config import AgentConfig
-from agentify.client_builder import LLMClientFactory
-from agentify.prompts import assistant_prompt
-from agentify.tools import (
+from agentify.core import BaseAgent, AgentConfig
+from agentify.llm import LLMClientFactory
+from agentify.extensions.prompts import assistant_prompt
+from agentify.extensions.tools import (
     get_current_time_tool,
     calculate_expression_tool,
     get_weather_tool,
@@ -170,7 +169,7 @@ def build_interface():
             )
 
             temperature_slider = gr.Slider(
-                minimum=0, maximum=1, value=0.7, step=0.05, label="Temperature"
+                minimum=0, maximum=1, value=0.5, step=0.05, label="Temperature"
             )
 
             gr.Markdown("## Tools & Advanced:")

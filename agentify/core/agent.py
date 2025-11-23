@@ -10,12 +10,12 @@ from typing import Any, Dict, Generator, List, Optional, Union, Iterator
 from PIL import Image
 from openai import RateLimitError
 
-from agentify.base_tool import Tool
-from agentify.client_builder import LLMClientFactory, LLMClientType
+from agentify.core.tool import Tool
+from agentify.llm.client import LLMClientFactory, LLMClientType
 from agentify.memory.service import MemoryService
 from agentify.memory.interfaces import MemoryAddress
-from agentify.config import AgentConfig, ImageConfig
-from agentify.callbacks import AgentCallbackHandler, LoggingCallbackHandler
+from agentify.core.config import AgentConfig, ImageConfig
+from agentify.core.callbacks import AgentCallbackHandler, LoggingCallbackHandler
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class BaseAgent:
         memory: MemoryService,
         *,
         memory_address: Optional[MemoryAddress] = None,
-        client_factory: LLMClientFactory = LLMClientFactory(),
+        client_factory: Optional[LLMClientFactory] = None,
         tools: Optional[List[Tool]] = None,
         image_config: Optional[ImageConfig] = None,
     ) -> None:
@@ -38,13 +38,15 @@ class BaseAgent:
         self.memory_address = memory_address
         self.image_config = image_config or ImageConfig()
         
-        # Ensure at least one logging handler if none provided
-        if not self.config.callbacks:
-             self.config.callbacks.append(LoggingCallbackHandler(logger))
+        # Decouple callbacks from config to avoid mutation of shared config
+        self.callbacks = list(self.config.callbacks) if self.config.callbacks else []
+        if not self.callbacks:
+             self.callbacks.append(LoggingCallbackHandler(logger))
 
         self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
 
-        self.client: LLMClientType = client_factory.create_client(
+        factory = client_factory or LLMClientFactory()
+        self.client: LLMClientType = factory.create_client(
             provider=self.config.provider,
             config_override=self.config.client_config_override,
             timeout=self.config.timeout,
@@ -212,7 +214,7 @@ class BaseAgent:
             common_params["tools"] = tools_payload
             common_params["tool_choice"] = tool_choice_param
 
-        for cb in self.config.callbacks:
+        for cb in self.callbacks:
             cb.on_llm_start(self.config.model_name, common_params["messages"])
 
         for attempt in range(self.config.max_retries):
@@ -225,24 +227,26 @@ class BaseAgent:
                     **common_params, stream=False
                 )
                 
-                for cb in self.config.callbacks:
+                for cb in self.callbacks:
                     cb.on_llm_end(response)
                     
                 if response.choices and len(response.choices) > 0:
                     return response.choices[0].message
                 raise ValueError("API response did not contain valid 'choices'.")
-            except RateLimitError:
-                if attempt == self.config.max_retries - 1:
-                    logger.error("API Rate Limit reached after retries.")
-                    raise
-                sleep_time = 2**attempt
-                logger.warning(
-                    f"Rate limit reached. Retrying in {sleep_time}s..."
-                )
-                time.sleep(sleep_time)
             except Exception as e:
-                for cb in self.config.callbacks:
+                # Unify error handling
+                for cb in self.callbacks:
                     cb.on_error(e, f"_get_llm_response attempt {attempt+1}")
+                
+                if isinstance(e, RateLimitError):
+                    if attempt == self.config.max_retries - 1:
+                        logger.error("API Rate Limit reached after retries.")
+                        raise
+                    sleep_time = 2**attempt
+                    logger.warning(f"Rate limit reached. Retrying in {sleep_time}s...")
+                    time.sleep(sleep_time)
+                    continue
+
                 logger.error(
                     f"Error in _get_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}",
                     exc_info=True,
@@ -312,22 +316,23 @@ class BaseAgent:
         """Execute a single tool and return its output as a string."""
         tool = self._tools.get(tool_name)
         
-        for cb in self.config.callbacks:
+        for cb in self.callbacks:
             cb.on_tool_start(tool_name, arguments)
             
         if not tool:
             err_msg = json.dumps({"error": f"Tool '{tool_name}' is not registered."})
-            for cb in self.config.callbacks:
+            for cb in self.callbacks:
                 cb.on_tool_finish(tool_name, err_msg)
             return err_msg
         
         try:
             result = tool(**arguments)
-            for cb in self.config.callbacks:
-                cb.on_tool_finish(tool_name, str(result))
-            return result
+            result_str = str(result)
+            for cb in self.callbacks:
+                cb.on_tool_finish(tool_name, result_str)
+            return result_str
         except Exception as e:
-            for cb in self.config.callbacks:
+            for cb in self.callbacks:
                 cb.on_error(e, f"Tool execution: {tool_name}")
             logger.error(f"Unexpected error executing tool '{tool_name}': {e}", exc_info=True)
             return json.dumps({"error": f"Unexpected error executing tool '{tool_name}': {e}"})
@@ -339,14 +344,17 @@ class BaseAgent:
         """
         tool_call_assembler: Dict[int, Dict[str, Any]] = {}
         
+        full_content = []
+        
         for chunk in response_stream:
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
 
             if delta.content:
-                for cb in self.config.callbacks:
+                for cb in self.callbacks:
                     cb.on_llm_new_token(delta.content)
+                full_content.append(delta.content)
                 yield delta.content
 
             if delta.tool_calls:
@@ -366,6 +374,13 @@ class BaseAgent:
                             call_data["function"]["name"] = tc_delta.function.name
                         if tc_delta.function.arguments:
                             call_data["function"]["arguments"] += tc_delta.function.arguments
+
+        # Call on_llm_end with the full accumulated content
+        full_response_text = "".join(full_content)
+        for cb in self.callbacks:
+            # Construct a minimal mock response object or just pass the text if the handler supports it.
+            # The protocol says 'response: Any'.
+            cb.on_llm_end(full_response_text)
 
         assembled_tool_calls = []
         for idx in sorted(tool_call_assembler.keys()):
@@ -457,7 +472,7 @@ class BaseAgent:
         """
         self._ensure_system_initialized(addr)
         
-        for cb in self.config.callbacks:
+        for cb in self.callbacks:
             cb.on_agent_start(self.config.name, user_input)
         
         user_content = self._build_user_content(
@@ -468,7 +483,7 @@ class BaseAgent:
         if user_content is not None:
             self.add(role="user", content=user_content, addr=addr)
 
-        for iteration_count in range(self.config.max_tool_iter):
+        for _ in range(self.config.max_tool_iter):
             response_or_stream = self._get_llm_response(addr=addr)
             
             current_turn_content_parts: List[str] = []
@@ -495,10 +510,9 @@ class BaseAgent:
 
             # If no tool calls, we are done
             if not assembled_tool_calls:
-                if full_turn_content:
-                    self.add(role="assistant", content=full_turn_content, addr=addr)
-                    for cb in self.config.callbacks:
-                        cb.on_agent_finish(self.config.name, full_turn_content)
+                self.add(role="assistant", content=full_turn_content, addr=addr)
+                for cb in self.callbacks:
+                    cb.on_agent_finish(self.config.name, full_turn_content)
                 break
 
             # Record assistant message with tool calls
@@ -530,6 +544,9 @@ class BaseAgent:
         else:
             warn_msg = f"\n[WARNING] Agent '{self.config.name}' reached max iterations ({self.config.max_tool_iter}).\n"
             logger.warning(warn_msg.strip())
+            # Notify finish even on max iterations
+            for cb in self.callbacks:
+                cb.on_agent_finish(self.config.name, warn_msg)
             yield warn_msg
 
     # Public entrypoint
@@ -572,6 +589,6 @@ class BaseAgent:
         self._tools.pop(name)
         return True
 
-    def register_tool(self, tool: "Tool") -> None:
+    def register_tool(self, tool: Tool) -> None:
         """Register (or replace) a tool."""
         self._tools[tool.name] = tool

@@ -11,9 +11,7 @@ sys.modules["dotenv"] = MagicMock()
 sys.modules["PIL"] = MagicMock()
 sys.modules["PIL.Image"] = MagicMock()
 
-from agentify.base_agent import BaseAgent
-from agentify.base_tool import Tool
-from agentify.callbacks import AgentCallbackHandler
+from agentify.core import BaseAgent, Tool, AgentConfig, AgentCallbackHandler
 
 class MockCallback(AgentCallbackHandler):
     def __init__(self):
@@ -42,7 +40,7 @@ def test_agent_initialization(agent_config, memory_service, memory_address):
         client_factory=mock_factory
     )
     assert agent.config.name == "TestAgent"
-    assert len(agent.config.callbacks) == 1  # Default logger
+    assert len(agent.callbacks) == 1  # Default logger
 
 def test_agent_callbacks(agent_config, memory_service, memory_address):
     callback = MockCallback()
