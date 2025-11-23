@@ -1,0 +1,68 @@
+from typing import Any, Dict, Optional
+from agentify.core.agent import BaseAgent
+from agentify.core.tool import Tool
+from agentify.memory.interfaces import MemoryAddress
+
+
+class AgentTool(Tool):
+    """Wraps a BaseAgent as a Tool so it can be called by another agent.
+
+    When the tool is invoked:
+    1. It receives 'instructions' from the caller.
+    2. It triggers the wrapped agent's `respond` method.
+    3. It returns the agent's final answer as the tool output.
+    """
+
+    def __init__(
+        self,
+        agent: BaseAgent,
+        parent_addr: MemoryAddress,
+        description_override: Optional[str] = None,
+    ):
+        self.agent = agent
+        self.parent_addr = parent_addr
+
+        # Define the schema for the LLM to understand how to call this agent
+        schema = {
+            "name": f"call_{agent.config.name.lower().replace(' ', '_')}",
+            "description": (
+                description_override
+                or (
+                    f"Delegate a task to {agent.config.name}. "
+                    f"Capabilities: {agent.config.system_prompt}"
+                )
+            )[:1024],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instructions": {
+                        "type": "string",
+                        "description": "The specific task or question for the agent.",
+                    }
+                },
+                "required": ["instructions"],
+            },
+        }
+
+        super().__init__(schema, self._run_agent)
+
+    def _run_agent(self, instructions: str) -> Dict[str, Any]:
+        """The actual function that runs when the tool is called."""
+
+        # Create a unique address for this interaction to keep memory isolated but linked
+        # We use the parent's conversation_id but set the agent_id to the child's name
+        child_addr = MemoryAddress(
+            user_id=self.parent_addr.user_id,
+            conversation_id=self.parent_addr.conversation_id,
+            agent_id=self.agent.config.name,
+        )
+
+        # Run the agent
+        # We use respond() which handles the loop
+        response = self.agent.respond(user_input=instructions, addr=child_addr)
+
+        # If response is a generator (streaming), we consume it all to return a single string
+        if hasattr(response, "__iter__") and not isinstance(response, str):
+            response = "".join(list(response))
+
+        return {"response": response}
