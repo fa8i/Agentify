@@ -15,7 +15,7 @@ from agentify.llm.client import LLMClientFactory, LLMClientType
 from agentify.memory.service import MemoryService
 from agentify.memory.interfaces import MemoryAddress
 from agentify.core.config import AgentConfig, ImageConfig
-from agentify.core.callbacks import AgentCallbackHandler, LoggingCallbackHandler
+from agentify.core.callbacks import LoggingCallbackHandler
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,11 @@ class BaseAgent:
         self.memory = memory
         self.memory_address = memory_address
         self.image_config = image_config or ImageConfig()
-        
+
         # Decouple callbacks from config to avoid mutation of shared config
         self.callbacks = list(self.config.callbacks) if self.config.callbacks else []
         if not self.callbacks:
-             self.callbacks.append(LoggingCallbackHandler(logger))
+            self.callbacks.append(LoggingCallbackHandler(logger))
 
         self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
 
@@ -55,7 +55,9 @@ class BaseAgent:
     @property
     def tool_defs(self) -> List[Dict[str, Any]]:
         """Dynamically generate tool definitions for the LLM."""
-        return [{"type": "function", "function": t.schema} for t in self._tools.values()]
+        return [
+            {"type": "function", "function": t.schema} for t in self._tools.values()
+        ]
 
     @property
     def list_tools(self) -> List[str]:
@@ -95,8 +97,7 @@ class BaseAgent:
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
     ) -> Optional[Union[str, List[Dict[str, Any]]]]:
-        """
-        Build the `content` field of the user message supporting:
+        """Build the `content` field of the user message supporting:
         - text only
         - image only
         - image + text (OpenAI-like multimodal list)
@@ -207,7 +208,7 @@ class BaseAgent:
             "messages": self.memory.get_history(addr),
             "temperature": self.config.temperature,
         }
-        
+
         # Only add tools if they exist
         tools_payload = self.tool_defs
         if tools_payload:
@@ -226,18 +227,18 @@ class BaseAgent:
                 response = self.client.chat.completions.create(
                     **common_params, stream=False
                 )
-                
+
                 for cb in self.callbacks:
                     cb.on_llm_end(response)
-                    
+
                 if response.choices and len(response.choices) > 0:
                     return response.choices[0].message
                 raise ValueError("API response did not contain valid 'choices'.")
             except Exception as e:
                 # Unify error handling
                 for cb in self.callbacks:
-                    cb.on_error(e, f"_get_llm_response attempt {attempt+1}")
-                
+                    cb.on_error(e, f"_get_llm_response attempt {attempt + 1}")
+
                 if isinstance(e, RateLimitError):
                     if attempt == self.config.max_retries - 1:
                         logger.error("API Rate Limit reached after retries.")
@@ -315,16 +316,16 @@ class BaseAgent:
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Execute a single tool and return its output as a string."""
         tool = self._tools.get(tool_name)
-        
+
         for cb in self.callbacks:
             cb.on_tool_start(tool_name, arguments)
-            
+
         if not tool:
             err_msg = json.dumps({"error": f"Tool '{tool_name}' is not registered."})
             for cb in self.callbacks:
                 cb.on_tool_finish(tool_name, err_msg)
             return err_msg
-        
+
         try:
             result = tool(**arguments)
             result_str = str(result)
@@ -334,18 +335,24 @@ class BaseAgent:
         except Exception as e:
             for cb in self.callbacks:
                 cb.on_error(e, f"Tool execution: {tool_name}")
-            logger.error(f"Unexpected error executing tool '{tool_name}': {e}", exc_info=True)
-            return json.dumps({"error": f"Unexpected error executing tool '{tool_name}': {e}"})
+            logger.error(
+                f"Unexpected error executing tool '{tool_name}': {e}", exc_info=True
+            )
+            return json.dumps(
+                {"error": f"Unexpected error executing tool '{tool_name}': {e}"}
+            )
 
-    def _process_stream_response(self, response_stream: Iterator[Any]) -> Generator[str, None, List[Dict[str, Any]]]:
+    def _process_stream_response(
+        self, response_stream: Iterator[Any]
+    ) -> Generator[str, None, List[Dict[str, Any]]]:
         """
         Process streaming response, yielding content and collecting tool calls.
         Returns the assembled tool calls.
         """
         tool_call_assembler: Dict[int, Dict[str, Any]] = {}
-        
+
         full_content = []
-        
+
         for chunk in response_stream:
             if not chunk.choices:
                 continue
@@ -373,7 +380,9 @@ class BaseAgent:
                         if tc_delta.function.name:
                             call_data["function"]["name"] = tc_delta.function.name
                         if tc_delta.function.arguments:
-                            call_data["function"]["arguments"] += tc_delta.function.arguments
+                            call_data["function"]["arguments"] += (
+                                tc_delta.function.arguments
+                            )
 
         # Call on_llm_end with the full accumulated content
         full_response_text = "".join(full_content)
@@ -386,35 +395,46 @@ class BaseAgent:
         for idx in sorted(tool_call_assembler.keys()):
             call_data = tool_call_assembler[idx]
             if not call_data.get("id"):
-                call_data["id"] = f"s_{self.config.provider[:3]}_tc_{idx}_{uuid.uuid4().hex[:6]}"
+                call_data["id"] = (
+                    f"s_{self.config.provider[:3]}_tc_{idx}_{uuid.uuid4().hex[:6]}"
+                )
             if call_data.get("function", {}).get("name"):
                 assembled_tool_calls.append(call_data)
-        
+
         return assembled_tool_calls
 
-    def _process_sync_response(self, msg_object: Any) -> tuple[Optional[str], List[Dict[str, Any]]]:
+    def _process_sync_response(
+        self, msg_object: Any
+    ) -> tuple[Optional[str], List[Dict[str, Any]]]:
         """Process synchronous response, returning content and tool calls."""
         content = getattr(msg_object, "content", None)
         tool_calls = []
-        
+
         if getattr(msg_object, "tool_calls", None):
             for i, tc in enumerate(msg_object.tool_calls):
-                tc_id = tc.id or f"ns_{self.config.provider[:3]}_tc_{i}_{uuid.uuid4().hex[:6]}"
-                tool_calls.append({
-                    "id": tc_id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments or "{}",
-                    },
-                })
-        
+                tc_id = (
+                    tc.id
+                    or f"ns_{self.config.provider[:3]}_tc_{i}_{uuid.uuid4().hex[:6]}"
+                )
+                tool_calls.append(
+                    {
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments or "{}",
+                        },
+                    }
+                )
+
         return content, tool_calls
 
-    def _expand_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _expand_tool_calls(
+        self, tool_calls: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Handle cases where the model concatenates multiple JSON objects in one argument string."""
         expanded_tool_calls: List[Dict[str, Any]] = []
-        
+
         for tc in tool_calls:
             tool_name = tc.get("function", {}).get("name", "unknown_tool")
             args_value = tc.get("function", {}).get("arguments")
@@ -433,24 +453,26 @@ class BaseAgent:
                 continue
 
             split_args_json = self._split_concatenated_json_objects(args_str)
-            
+
             if len(split_args_json) > 1:
                 for i, single_arg_json in enumerate(split_args_json):
-                    expanded_tool_calls.append({
-                        "id": f"{original_id}_part_{i}",
-                        "type": "function",
-                        "function": {
-                            "name": tool_name,
-                            "arguments": single_arg_json,
-                        },
-                    })
+                    expanded_tool_calls.append(
+                        {
+                            "id": f"{original_id}_part_{i}",
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": single_arg_json,
+                            },
+                        }
+                    )
             elif len(split_args_json) == 1:
                 tc["function"]["arguments"] = split_args_json[0]
                 expanded_tool_calls.append(tc)
             else:
                 # Fallback
                 expanded_tool_calls.append(tc)
-                
+
         return expanded_tool_calls
 
     def _execute_agent_loop(
@@ -461,8 +483,7 @@ class BaseAgent:
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
     ) -> Generator[str, None, None]:
-        """
-        Orchestrates the agent logic:
+        """Orchestrates the agent logic:
         1. Prepare context (system + user message).
         2. Loop:
            - Get LLM response (stream or sync).
@@ -471,10 +492,10 @@ class BaseAgent:
            - If no tool calls: break.
         """
         self._ensure_system_initialized(addr)
-        
+
         for cb in self.callbacks:
             cb.on_agent_start(self.config.name, user_input)
-        
+
         user_content = self._build_user_content(
             user_input,
             image_path=image_path,
@@ -485,12 +506,12 @@ class BaseAgent:
 
         for _ in range(self.config.max_tool_iter):
             response_or_stream = self._get_llm_response(addr=addr)
-            
+
             current_turn_content_parts: List[str] = []
             assembled_tool_calls: List[Dict[str, Any]] = []
 
             if self.config.stream:
-                gen = self._process_stream_response(response_or_stream) # type: ignore
+                gen = self._process_stream_response(response_or_stream)  # type: ignore
                 try:
                     while True:
                         content_chunk = next(gen)
@@ -499,7 +520,9 @@ class BaseAgent:
                 except StopIteration as e:
                     assembled_tool_calls = e.value
             else:
-                content, assembled_tool_calls = self._process_sync_response(response_or_stream)
+                content, assembled_tool_calls = self._process_sync_response(
+                    response_or_stream
+                )
                 if content:
                     yield content
                     current_turn_content_parts.append(content)
@@ -527,12 +550,12 @@ class BaseAgent:
                 tool_name = tc["function"]["name"]
                 tool_call_id = tc["id"]
                 args_str = tc["function"]["arguments"]
-                
+
                 try:
                     args = self._parse_tool_arguments(tool_name, args_str)
                     result_content = self._execute_tool(tool_name, args)
                 except ValueError as e:
-                     result_content = json.dumps({"error": str(e)})
+                    result_content = json.dumps({"error": str(e)})
 
                 self.add(
                     role="tool",
@@ -559,9 +582,7 @@ class BaseAgent:
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
     ) -> Union[str, Generator[str, None, None]]:
-        """
-        Main entrypoint to interact with the agent.
-        """
+        """Main entrypoint to interact with the agent."""
         a = self._addr_or_raise(addr)
         response_generator = self._execute_agent_loop(
             user_input,

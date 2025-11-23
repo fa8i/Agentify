@@ -9,8 +9,10 @@ LLMClientType = Union[OpenAI, AzureOpenAI]
 
 ClientBuilder = Callable[[Dict[str, Any], int], LLMClientType]
 
+
 class LLMClientFactory:
-    """Clase para crear clientes LLM para diferentes proveedores."""
+    """Factory class to create LLM client instances for different providers."""
+
     SUPPORTED_PROVIDERS = ["azure", "openai", "deepseek", "gemini", "anthropic"]
 
     def __init__(self, default_timeout: int = 30):
@@ -21,16 +23,17 @@ class LLMClientFactory:
             "gemini": self._create_gemini_client,
             "azure": self._create_azure_client,
             "anthropic": self._create_anthropic_client,
-            "mistral": self._create_mistral_client,
             "llama": self._create_llama_client,
         }
 
-    def _get_env_or_config(self, key: str, env_var_name: str, config: Dict[str, Any], required: bool = True) -> Optional[str]:
-        """Helper para obtener valor de config_override o variable de entorno."""
+    def _get_env_or_config(
+        self, key: str, env_var_name: str, config: Dict[str, Any], required: bool = True
+    ) -> Optional[str]:
+        """Helper to obtain a value from config_override or an environment variable."""
         value = config.get(key, os.getenv(env_var_name))
         if required and not value:
             raise ValueError(
-                f"El parámetro '{key}' (o la variable de entorno '{env_var_name}') es requerido pero no se encontró."
+                f"Parameter '{key}' (or environment variable '{env_var_name}') is required but was not found."
             )
         return value
 
@@ -49,31 +52,21 @@ class LLMClientFactory:
             base_url=base_url,
             timeout=timeout,
         )
-    
+
     def _create_anthropic_client(self, config: Dict[str, Any], timeout: int) -> OpenAI:
         api_key = self._get_env_or_config("api_key", "ANTHROPIC_API_KEY", config)
         base_url = "https://api.anthropic.com/v1/"
-        
+
         return OpenAI(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
         )
-    
-    def _create_mistral_client(self, config: Dict[str, Any], timeout: int) -> OpenAI:
-        api_key = self._get_env_or_config("api_key", "MISTRAL_API_KEY", config)
-        base_url = "https://api.mistral.ai/v1"
-        
-        return OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=timeout,
-        )
-    
+
     def _create_llama_client(self, config: Dict[str, Any], timeout: int) -> OpenAI:
         api_key = self._get_env_or_config("api_key", "LLAMA_API_KEY", config)
         base_url = "https://api.llama.com/compat/v1/"
-        
+
         return OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -83,20 +76,23 @@ class LLMClientFactory:
     def _create_gemini_client(self, config: Dict[str, Any], timeout: int) -> OpenAI:
         api_key = self._get_env_or_config("api_key", "GEMINI_API_KEY", config)
         base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-        
+
         client_args = {"api_key": api_key, "timeout": timeout}
         if base_url:
             client_args["base_url"] = base_url
         else:
-            print("Advertencia: No se proporcionó GEMINI_URL para Gemini. "
-                  "Asumiendo que el SDK de OpenAI lo maneja o no es necesario.")
-        
+            print(
+                "Warning: No GEMINI_URL provided for Gemini. Assuming the OpenAI SDK handles it or it's not needed."
+            )
+
         return OpenAI(**client_args)
 
     def _create_azure_client(self, config: Dict[str, Any], timeout: int) -> AzureOpenAI:
         api_key = self._get_env_or_config("api_key", "AZURE_OPENAI_KEY", config)
         api_version = self._get_env_or_config("api_version", "API_VERSION", config)
-        azure_endpoint = self._get_env_or_config("azure_endpoint", "AZURE_OPENAI_ENDPOINT", config)
+        azure_endpoint = self._get_env_or_config(
+            "azure_endpoint", "AZURE_OPENAI_ENDPOINT", config
+        )
         return AzureOpenAI(
             api_key=api_key,
             api_version=api_version,
@@ -110,26 +106,24 @@ class LLMClientFactory:
         config_override: Optional[Dict[str, Any]] = None,
         timeout: Optional[int] = None,
     ) -> LLMClientType:
-        """
-        Crea un cliente LLM para el proveedor especificado.
+        """Create an LLM client for the specified provider.
 
         Args:
-            provider: Nombre del proveedor (ej. "openai", "azure").
-            config_override: Un diccionario para sobreescribir o proveer parámetros de configuración
-                             (ej. api_key, base_url) en lugar de usar variables de entorno.
-            timeout: Timeout específico para este cliente, si no se usa el default_timeout de la factoría.
+            provider: Name of the provider (e.g., "openai", "azure").
+            config_override: Optional dict to override or provide configuration parameters (e.g., api_key, base_url) instead of using environment variables.
+            timeout: Specific timeout for this client; if not provided, the factory's default_timeout is used.
 
         Returns:
-            Una instancia del cliente LLM.
+            An instance of the requested LLM client.
 
         Raises:
-            ValueError: Si el proveedor no es soportado o faltan parámetros requeridos.
+            ValueError: If the provider is not supported or required parameters are missing.
         """
         provider_lower = provider.lower()
         if provider_lower not in self._builders:
             raise ValueError(
-                f"Proveedor '{provider}' no soportado. "
-                f"Soportados: {', '.join(self.SUPPORTED_PROVIDERS)}"
+                f"Provider '{provider}' not supported. "
+                f"Supported: {', '.join(self.SUPPORTED_PROVIDERS)}"
             )
 
         builder_func = self._builders[provider_lower]

@@ -3,6 +3,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class AgentCallbackHandler(Protocol):
     """Interface for agent callbacks to allow observability and side-effects."""
 
@@ -49,7 +50,9 @@ class LoggingCallbackHandler(AgentCallbackHandler):
         self.logger.info(f"Agent '{agent_name}' started. Input: {user_input[:100]}...")
 
     def on_agent_finish(self, agent_name: str, response: str) -> None:
-        self.logger.info(f"Agent '{agent_name}' finished. Response: {response[:100]}...")
+        self.logger.info(
+            f"Agent '{agent_name}' finished. Response: {response[:100]}..."
+        )
 
     def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> None:
         self.logger.info(f"Tool '{tool_name}' started. Args: {args}")
