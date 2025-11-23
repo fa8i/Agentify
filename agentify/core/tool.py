@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class Tool:
-    """Wrapper de vinculación de JSON-schema con su función Python."""
+    """Wrapper for binding JSON-schema with its Python function."""
 
     schema: Dict[str, Any]
     func: Callable[..., Any]
@@ -19,7 +19,7 @@ class Tool:
         return self.schema["name"]
 
     def __call__(self, **kwargs: Any) -> str:
-        """Ejecuta la función y devuelve JSON o string; captura errores genéricos."""
+        """Executes the function and returns JSON or string; captures generic errors."""
         try:
             result = self.func(**kwargs)
         except Exception as exc:  # noqa: BLE001
