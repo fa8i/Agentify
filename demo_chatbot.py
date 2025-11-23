@@ -94,8 +94,7 @@ def stream_response_to_chatbot(
             role="user",
             content=gr.Image(
                 value=image_path,
-                show_download_button=False,
-                show_fullscreen_button=True,
+                buttons=[],
             ),
         )
         chat_history_list.append(msg_user_img)
@@ -205,10 +204,10 @@ def build_interface():
 
         chatbot_display = gr.Chatbot(
             scale=1,
-            label="Conversation",
-            group_consecutive_messages=False,
+            group_consecutive_messages=True,
             height=500,
             type="messages",
+            render_markdown=True,
         )
 
         message_input = gr.MultimodalTextbox(
@@ -293,8 +292,7 @@ def build_interface():
                             role="user",
                             content=gr.Image(
                                 value=image_path_for_agent,
-                                show_download_button=False,
-                                show_fullscreen_button=True,
+                                buttons=[],
                             ),
                         )
                     )
