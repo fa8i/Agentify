@@ -1,5 +1,3 @@
-"""LLM client management."""
-
 from agentify.llm.client import LLMClientFactory, LLMClientType
 
 __all__ = [
