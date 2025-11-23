@@ -5,6 +5,7 @@ from agentify.memory.policies import MemoryPolicy
 from agentify.memory.service import MemoryService
 from agentify.memory.interfaces import MemoryAddress
 from agentify.base_agent import BaseAgent
+from agentify.config import AgentConfig
 from agentify.client_builder import LLMClientFactory
 from agentify.prompts import assistant_prompt
 from agentify.tools import (
@@ -68,15 +69,18 @@ def create_agent_instance(
     """Create a new agent instance with the specified parameters."""
     tools_val = selected_tools_val or []
     tools = [BUILTIN_TOOLS[t] for t in tools_val if t in BUILTIN_TOOLS]
-    return BaseAgent(
+    config = AgentConfig(
         name=name_val or "GradioAgent",
         system_prompt=assistant_prompt,
         provider=provider_val,
         model_name=model_val,
         temperature=temperature_val,
-        tools=tools,
-        agent_timeout=timeout_val,
+        timeout=timeout_val,
         stream=stream_val,
+    )
+    return BaseAgent(
+        config=config,
+        tools=tools,
         client_factory=LLMClientFactory(),
         memory=memory,
         memory_address=addr,
@@ -94,7 +98,8 @@ def stream_response_to_chatbot(
             role="user",
             content=gr.Image(
                 value=image_path,
-                buttons=[],
+                show_download_button=False,
+                show_fullscreen_button=False,
             ),
         )
         chat_history_list.append(msg_user_img)
@@ -292,7 +297,8 @@ def build_interface():
                             role="user",
                             content=gr.Image(
                                 value=image_path_for_agent,
-                                buttons=[],
+                                show_download_button=False,
+                                show_fullscreen_button=False,
                             ),
                         )
                     )
