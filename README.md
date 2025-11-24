@@ -32,12 +32,12 @@ Agentify is a Python library for building and orchestrating AI agents, from simp
 ## Installation
 
 ```bash
-pip install agentify
+pip install agentify-core
 ```
 
 For optional features:
 ```bash
-pip install agentify[all]  # Installs all optional dependencies
+pip install agentify-core[all]  # Installs all optional dependencies
 ```
 
 ## Quick Start
