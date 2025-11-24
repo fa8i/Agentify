@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentify"
+name = "agentify-core"
 version = "0.1.0"
 description = "Framework-agnostic AI agent library for building single and multi-agent systems"
 readme = "README.md"
