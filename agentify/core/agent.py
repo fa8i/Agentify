@@ -612,4 +612,13 @@ class BaseAgent:
 
     def register_tool(self, tool: Tool) -> None:
         """Register (or replace) a tool."""
+        if tool.name in self._tools:
+            # Check if it's the same tool object
+            if self._tools[tool.name] == tool:
+                return
+
+            logger.debug(
+                f"Overwriting existing tool '{tool.name}' in agent '{self.config.name}'"
+            )
+
         self._tools[tool.name] = tool

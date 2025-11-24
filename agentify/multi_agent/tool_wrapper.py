@@ -49,8 +49,7 @@ class AgentTool(Tool):
     def _run_agent(self, instructions: str) -> Dict[str, Any]:
         """The actual function that runs when the tool is called."""
 
-        # Create a unique address for this interaction to keep memory isolated but linked
-        # We use the parent's conversation_id but set the agent_id to the child's name
+        # Create unique address for child, linked to parent's session
         child_addr = MemoryAddress(
             user_id=self.parent_addr.user_id,
             conversation_id=self.parent_addr.conversation_id,
@@ -58,10 +57,67 @@ class AgentTool(Tool):
         )
 
         # Run the agent
-        # We use respond() which handles the loop
         response = self.agent.respond(user_input=instructions, addr=child_addr)
 
-        # If response is a generator (streaming), we consume it all to return a single string
+        # Consume generator if needed
+        if hasattr(response, "__iter__") and not isinstance(response, str):
+            response = "".join(list(response))
+
+        return {"response": response}
+
+
+class Flow(Any):
+    """Protocol for any multi-agent flow (Team, Pipeline, etc)."""
+
+    def run(
+        self,
+        user_input: str,
+        session_id: str = "default_session",
+        user_id: str = "default_user",
+    ) -> Any: ...
+
+
+class FlowTool(Tool):
+    """Wraps a Flow (Team, Pipeline, HierarchicalTeam) as a Tool."""
+
+    def __init__(
+        self,
+        flow: Any,
+        name: str,
+        description: str,
+        parent_addr: MemoryAddress,
+    ):
+        self.flow = flow
+        self.parent_addr = parent_addr
+
+        schema = {
+            "name": f"call_{name.lower().replace(' ', '_')}",
+            "description": description[:1024],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instructions": {
+                        "type": "string",
+                        "description": "The specific task or instructions for this team/pipeline.",
+                    }
+                },
+                "required": ["instructions"],
+            },
+        }
+
+        super().__init__(schema, self._run_flow)
+
+    def _run_flow(self, instructions: str) -> Dict[str, Any]:
+        """Runs the wrapped flow."""
+
+        # Maintain context continuity
+        response = self.flow.run(
+            user_input=instructions,
+            session_id=self.parent_addr.conversation_id,
+            user_id=self.parent_addr.user_id,
+        )
+
+        # Consume generator if needed
         if hasattr(response, "__iter__") and not isinstance(response, str):
             response = "".join(list(response))
 
