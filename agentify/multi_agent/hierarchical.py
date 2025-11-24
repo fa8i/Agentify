@@ -44,21 +44,7 @@ class HierarchicalTeam:
             agent_id=self.root.config.name,
         )
 
-        # 2. Recursively register children as tools for parents
-        # We need to do this for every parent in the hierarchy map.
-        # But we must ensure the 'parent_addr' is correct.
-        # Actually, in a static hierarchy, the parent's address might need to be dynamic
-        # if we want to support multiple sessions.
-
-        # However, AgentTool needs 'parent_addr' at construction time to know where to link memory?
-        # Let's look at AgentTool again.
-        # AgentTool takes 'parent_addr'. When run_agent is called, it creates 'child_addr' using parent's IDs.
-
-        # Issue: We don't know the parent's address for DEEP nodes until runtime?
-        # Wait, the user requirement says:
-        # "Para cada padre: parent_addr = MemoryAddress(..., agent_id=parent.config.name)"
-        # This implies we can pre-calculate addresses based on the session_id passed to `run`.
-
+        # 2. Register hierarchy tools for this session
         self._register_hierarchy_tools(session_id, user_id)
 
         # 3. Run Root
@@ -68,7 +54,6 @@ class HierarchicalTeam:
         """Registers children as tools for their parents based on the current session."""
 
         for parent, children in self.hierarchy.items():
-            # Define parent's address for this session
             parent_addr = MemoryAddress(
                 user_id=user_id,
                 conversation_id=session_id,
@@ -76,28 +61,24 @@ class HierarchicalTeam:
             )
 
             for child in children:
-                # Check if tool already exists to avoid duplication?
-                # The user said "avoid registering duplicate tools" is a nice to have for Team,
-                # but here we should probably check too.
-
                 # Check if child is a BaseAgent or a Flow
                 if isinstance(child, BaseAgent):
                     tool_wrapper = AgentTool(agent=child, parent_addr=parent_addr)
                 else:
-                    # It's a Flow (Team, Pipeline, etc)
-                    # We need a name and description for the tool
-                    # We try to get it from the object, or generate a default
+                    # Handle Flows (Team, Pipeline, etc)
                     child_name = getattr(child, "name", f"Team_{id(child)}")
                     if hasattr(child, "config"):
                         child_name = child.config.name
-                    
-                    child_desc = getattr(child, "description", f"Delegate to {child_name}")
-                    
+
+                    child_desc = getattr(
+                        child, "description", f"Delegate to {child_name}"
+                    )
+
                     tool_wrapper = FlowTool(
                         flow=child,
                         name=child_name,
                         description=child_desc,
-                        parent_addr=parent_addr
+                        parent_addr=parent_addr,
                     )
 
                 # Register with parent

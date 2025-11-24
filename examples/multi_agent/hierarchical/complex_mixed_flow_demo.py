@@ -57,10 +57,7 @@ def create_complex_system():
     # Shared memory service
     memory = MemoryService(store=InMemoryStore())
 
-    # ======================
     # Level 3: Specialists
-    # ======================
-
     # Design Team Members
     ux_designer = BaseAgent(
         config=AgentConfig(
@@ -140,10 +137,7 @@ def create_complex_system():
         memory=memory,
     )
 
-    # ======================
     # Level 2: Team Leads
-    # ======================
-
     # Architect (supervises Design Team)
     architect = BaseAgent(
         config=AgentConfig(
@@ -181,10 +175,7 @@ def create_complex_system():
         memory=memory,
     )
 
-    # ======================
     # Level 1: Teams
-    # ======================
-
     design_team = Team(
         agents=[architect, ux_designer, tech_writer],
         supervisor=architect,
@@ -195,17 +186,11 @@ def create_complex_system():
         supervisor=tech_lead,
     )
 
-    # ======================
     # Level 0.5: Pipeline
-    # ======================
-
     # Sequential: Dev → QA
     dev_pipeline = SequentialPipeline(steps=[dev_team, qa_engineer])
 
-    # ======================
     # Level 0: Root
-    # ======================
-
     product_owner = BaseAgent(
         config=AgentConfig(
             name="ProductOwner",
@@ -226,13 +211,8 @@ def create_complex_system():
         memory=memory,
     )
 
-    # ======================
     # Hierarchical Assembly
-    # ======================
-
-    # We can directly nest Team and Pipeline objects
     # ProductOwner → [DesignTeam, DevPipeline]
-
     # Add names/descriptions to the flow objects so FlowTool can use them
     design_team.name = "DesignTeam"
     design_team.description = (

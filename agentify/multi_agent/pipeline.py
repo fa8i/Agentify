@@ -28,10 +28,7 @@ class SequentialPipeline:
 
         current_input = user_input
 
-        # We'll collect the final result.
-        # If intermediate steps return generators, we consume them to pass string to next step.
-        # Only the LAST step's output is returned as-is (string or generator).
-
+        # Collect final result. Consume intermediate generators to pass string to next step.
         for i, step in enumerate(self.steps):
             is_last_step = i == len(self.steps) - 1
 
@@ -39,17 +36,6 @@ class SequentialPipeline:
             step_name = getattr(step, "name", f"step_{i}")
             if hasattr(step, "config"):
                 step_name = step.config.name
-
-            # Create a specific address for this step execution
-            # Note: For Teams or nested Pipelines, they might manage their own internal addressing,
-            # but we pass these IDs so they can derive from them if needed.
-
-            # If the step is a BaseAgent, we can pass 'addr'.
-            # If it's a Team or another Pipeline, they accept session_id/user_id in run().
-
-            # We need a unified way to call 'run' or 'respond'.
-            # BaseAgent -> respond(user_input, addr=...)
-            # Team/Pipeline -> run(user_input, session_id=..., user_id=...)
 
             response: Union[str, Generator[str, None, None]]
 
@@ -69,14 +55,13 @@ class SequentialPipeline:
                     f"Step {i} ({type(step)}) is not a valid agent or flow."
                 )
 
-            # If it's NOT the last step, we must consume the output to pass it to the next step.
+            # If not last step, consume output to pass to next step
             if not is_last_step:
                 if hasattr(response, "__iter__") and not isinstance(response, str):
                     current_input = "".join(list(response))
                 else:
                     current_input = str(response)
             else:
-                # Last step: return the response directly (stream or string)
                 return response
 
         return current_input

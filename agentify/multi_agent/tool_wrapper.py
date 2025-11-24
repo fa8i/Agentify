@@ -49,8 +49,7 @@ class AgentTool(Tool):
     def _run_agent(self, instructions: str) -> Dict[str, Any]:
         """The actual function that runs when the tool is called."""
 
-        # Create a unique address for this interaction to keep memory isolated but linked
-        # We use the parent's conversation_id but set the agent_id to the child's name
+        # Create unique address for child, linked to parent's session
         child_addr = MemoryAddress(
             user_id=self.parent_addr.user_id,
             conversation_id=self.parent_addr.conversation_id,
@@ -58,10 +57,9 @@ class AgentTool(Tool):
         )
 
         # Run the agent
-        # We use respond() which handles the loop
         response = self.agent.respond(user_input=instructions, addr=child_addr)
 
-        # If response is a generator (streaming), we consume it all to return a single string
+        # Consume generator if needed
         if hasattr(response, "__iter__") and not isinstance(response, str):
             response = "".join(list(response))
 
@@ -80,14 +78,11 @@ class Flow(Any):
 
 
 class FlowTool(Tool):
-    """Wraps a Flow (Team, Pipeline, HierarchicalTeam) as a Tool.
-
-    This allows nesting entire flows inside other agents or teams.
-    """
+    """Wraps a Flow (Team, Pipeline, HierarchicalTeam) as a Tool."""
 
     def __init__(
         self,
-        flow: Any,  # Should be Flow, but avoiding circular imports or strict checks for now
+        flow: Any,
         name: str,
         description: str,
         parent_addr: MemoryAddress,
@@ -115,8 +110,7 @@ class FlowTool(Tool):
     def _run_flow(self, instructions: str) -> Dict[str, Any]:
         """Runs the wrapped flow."""
 
-        # We pass the same session/user IDs to maintain context continuity
-        # The flow itself handles its internal addressing
+        # Maintain context continuity
         response = self.flow.run(
             user_input=instructions,
             session_id=self.parent_addr.conversation_id,

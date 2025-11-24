@@ -1,4 +1,18 @@
-gradio
-openai
-python-dotenv
-requests
+# Core dependencies (required)
+openai>=1.0.0
+python-dotenv>=0.19.0
+Pillow>=9.0.0
+
+# Optional dependencies (install with pip install agentify[extra])
+# For Redis storage: pip install agentify[redis]
+# redis>=4.0.0
+
+# For extension tools (weather, etc): pip install agentify[tools]
+# requests>=2.25.0
+
+# For UI/demos: pip install agentify[ui]
+# gradio>=3.0.0
+
+# Install all optional dependencies: pip install agentify[all]
+
+# Development dependencies: pip install agentify[dev]

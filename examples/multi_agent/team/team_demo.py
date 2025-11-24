@@ -2,7 +2,6 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from agentify.core import BaseAgent, AgentConfig
@@ -13,9 +12,10 @@ from agentify.extensions.tools import get_current_time_tool, calculate_expressio
 
 load_dotenv()
 
+
 def create_demo_team():
     memory = MemoryService(store=InMemoryStore())
-    
+
     # 1. Create Worker: Researcher (has tools)
     researcher_config = AgentConfig(
         name="Researcher",
@@ -27,9 +27,9 @@ def create_demo_team():
     researcher = BaseAgent(
         config=researcher_config,
         memory=memory,
-        tools=[get_current_time_tool, calculate_expression_tool]
+        tools=[get_current_time_tool, calculate_expression_tool],
     )
-    
+
     # 2. Create Supervisor: Manager (no tools initially, will get Researcher as tool)
     manager_config = AgentConfig(
         name="Manager",
@@ -42,21 +42,23 @@ def create_demo_team():
         config=manager_config,
         memory=memory,
     )
-    
+
     # 3. Create Team
     team = Team(agents=[manager, researcher], supervisor=manager)
     return team
 
+
 def main():
     print("Initializing Team...")
     team = create_demo_team()
-    
+
     print("\n--- Test 1: Simple Delegation ---")
     query = "What time is it and what is 25 * 4?"
     print(f"User: {query}")
-    
+
     response = team.run(query, session_id="demo_session_1")
     print(f"\nManager Response:\n{response}")
+
 
 if __name__ == "__main__":
     main()

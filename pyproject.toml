@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentify"
+version = "0.1.0"
+description = "Framework-agnostic AI agent library for building single and multi-agent systems"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Fabian M", email = "fabian@example.com"}
+]
+keywords = ["agent", "multi-agent", "ai", "llm", "openai", "framework"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Dependencias principales (runtime)
+dependencies = [
+    "openai>=1.0.0",
+    "python-dotenv>=0.19.0",
+    "Pillow>=9.0.0",
+]
+
+# Dependencias opcionales
+[project.optional-dependencies]
+# Extensiones de almacenamiento
+redis = [
+    "redis>=4.0.0",
+]
+
+# Herramientas de extensión
+tools = [
+    "requests>=2.25.0",
+]
+
+# UI y demos
+ui = [
+    "gradio>=3.0.0",
+]
+
+# Todas las extensiones
+all = [
+    "redis>=4.0.0",
+    "requests>=2.25.0",
+    "gradio>=3.0.0",
+]
+
+# Desarrollo y testing
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "flake8>=5.0.0",
+    "mypy>=1.0.0",
+    "twine>=4.0.0",
+    "build>=0.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/fa8i/Agentify-core"
+Repository = "https://github.com/fa8i/Agentify-core"
+"Bug Tracker" = "https://github.com/fa8i/Agentify-core/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentify*"]
+
+[tool.setuptools.package-data]
+agentify = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311']
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

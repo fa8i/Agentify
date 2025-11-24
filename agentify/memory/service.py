@@ -32,8 +32,7 @@ _ALLOWED_FIELDS = {"role", "content", "name", "tool_call_id", "metadata", "id", 
 
 
 class MemoryService:
-    """
-    Facade consumed by the agent. It does NOT create addresses.
+    """Facade consumed by the agent. It does NOT create addresses.
     The API requires a MemoryAddress provided by the application/API layer.
     """
 
@@ -44,8 +43,7 @@ class MemoryService:
         self.policy = policy or MemoryPolicy(store)
 
     def _normalize_message(self, message: Dict[str, Any]) -> Message:
-        """
-        Accept OpenAI-shaped dicts; move unknown keys (e.g., 'tool_calls') into metadata.
+        """Accept OpenAI-shaped dicts; move unknown keys (e.g., 'tool_calls') into metadata.
         This keeps the Message dataclass stable without adding many optional fields.
         """
         incoming = dict(message)  # shallow copy

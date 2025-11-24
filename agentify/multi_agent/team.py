@@ -56,13 +56,7 @@ class Team:
             worker_tools.append(tool_wrapper)
 
             # Register with supervisor
-            self.supervisor.register_tool(
-                tool_wrapper
-            )  # Might need to be careful not to duplicate tools
+            self.supervisor.register_tool(tool_wrapper)
 
         # 3. Run Supervisor
-        try:
-            return self.supervisor.respond(user_input=user_input, addr=supervisor_addr)
-        finally:
-            # Optionally cleanup tools after run if want stateless agents
-            pass
+        return self.supervisor.respond(user_input=user_input, addr=supervisor_addr)

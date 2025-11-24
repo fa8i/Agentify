@@ -1,7 +1,11 @@
 from __future__ import annotations
 import json
 from typing import List
-import redis
+
+try:
+    import redis
+except ImportError:
+    redis = None
 from ..interfaces import ConversationStore, MemoryAddress, Message
 
 
@@ -10,7 +14,11 @@ class RedisStore(ConversationStore):
     Redis-backed store. The key is generated from MemoryAddress.key_str().
     """
 
-    def __init__(self, url: str = "redis://localhost:6379/0", key_prefix: str = "mem") -> None:
+    def __init__(
+        self, url: str = "redis://localhost:6379/0", key_prefix: str = "mem"
+    ) -> None:
+        if redis is None:
+            raise ImportError("Redis is not installed. Please install agentify[redis].")
         self.r = redis.from_url(url, decode_responses=True)
         self.prefix = key_prefix
 
@@ -20,7 +28,9 @@ class RedisStore(ConversationStore):
     def append_message(self, addr: MemoryAddress, msg: Message) -> None:
         self.r.rpush(self._hkey(addr), json.dumps(msg.to_dict(), ensure_ascii=False))
 
-    def read_messages(self, addr: MemoryAddress, start: int = 0, end: int = -1) -> List[Message]:
+    def read_messages(
+        self, addr: MemoryAddress, start: int = 0, end: int = -1
+    ) -> List[Message]:
         raw = self.r.lrange(self._hkey(addr), start, end)
         return [Message(**json.loads(x)) for x in raw]
 
@@ -30,8 +40,7 @@ class RedisStore(ConversationStore):
         pipe.delete(key)
         if messages:
             pipe.rpush(
-                key,
-                *[json.dumps(m.to_dict(), ensure_ascii=False) for m in messages]
+                key, *[json.dumps(m.to_dict(), ensure_ascii=False) for m in messages]
             )
         pipe.execute()
 
