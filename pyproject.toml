@@ -70,9 +70,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/fa8i/Agentify-core"
-Repository = "https://github.com/fa8i/Agentify-core"
-"Bug Tracker" = "https://github.com/fa8i/Agentify-core/issues"
+Homepage = "https://github.com/fa8i/Agentify"
+Repository = "https://github.com/fa8i/Agentify"
+"Bug Tracker" = "https://github.com/fa8i/Agentify/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

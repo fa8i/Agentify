@@ -97,5 +97,5 @@ Check out the [examples](examples/) directory for detailed implementations:
 
 ## Links
 
-- **Repository**: https://github.com/fa8i/Agentify-core
-- **Issues**: https://github.com/fa8i/Agentify-core/issues
+- **Repository**: https://github.com/fa8i/Agentify
+- **Issues**: https://github.com/fa8i/Agentify/issues
