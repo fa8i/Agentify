@@ -25,10 +25,6 @@ class HierarchicalTeam:
         self.root = root
         self.hierarchy = hierarchy
 
-        # Validate that root is in the hierarchy if it has children,
-        # or at least that the structure makes sense.
-        # (We assume the user constructs the dict correctly for now)
-
     def run(
         self,
         user_input: str,
