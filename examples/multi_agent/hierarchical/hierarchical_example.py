@@ -3,11 +3,10 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-from agentify.core.agent import BaseAgent
-from agentify.core.config import AgentConfig
-from agentify.memory.service import MemoryService
+from agentify.core import BaseAgent, AgentConfig
+from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
-from agentify.multi_agent.hierarchical import HierarchicalTeam
+from agentify.multi_agent import HierarchicalTeam
 
 
 def main():

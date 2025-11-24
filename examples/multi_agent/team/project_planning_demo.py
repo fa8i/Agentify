@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from agentify.core import BaseAgent, AgentConfig
-from agentify.memory.service import MemoryService
+from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.multi_agent import Team
 from agentify.extensions.tools import get_current_time_tool, calculate_expression_tool

@@ -3,11 +3,10 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-from agentify.core.agent import BaseAgent
-from agentify.core.config import AgentConfig
-from agentify.memory.service import MemoryService
+from agentify.core import BaseAgent, AgentConfig
+from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
-from agentify.multi_agent.pipeline import SequentialPipeline
+from agentify.multi_agent import Pipeline
 
 
 def main():
@@ -35,7 +34,7 @@ def main():
     writer = BaseAgent(config=writer_config, memory=memory_service)
 
     # 3. Create Pipeline
-    pipeline = SequentialPipeline(steps=[researcher, writer])
+    pipeline = Pipeline(steps=[researcher, writer])
 
     # 4. Run Pipeline
     topic = "The planet Mars"

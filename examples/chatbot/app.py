@@ -1,9 +1,7 @@
 import gradio as gr
 from agentify.memory.stores.in_memory_store import InMemoryStore  # noqa: F401
 from agentify.memory.stores.redis_store import RedisStore  # noqa: F401
-from agentify.memory.policies import MemoryPolicy
-from agentify.memory.service import MemoryService
-from agentify.memory.interfaces import MemoryAddress
+from agentify.memory import MemoryPolicy, MemoryService, MemoryAddress
 from agentify.core import BaseAgent, AgentConfig
 from agentify.llm import LLMClientFactory
 from agentify.extensions.prompts import assistant_prompt
