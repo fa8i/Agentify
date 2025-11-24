@@ -66,3 +66,65 @@ class AgentTool(Tool):
             response = "".join(list(response))
 
         return {"response": response}
+
+
+class Flow(Any):
+    """Protocol for any multi-agent flow (Team, Pipeline, etc)."""
+
+    def run(
+        self,
+        user_input: str,
+        session_id: str = "default_session",
+        user_id: str = "default_user",
+    ) -> Any: ...
+
+
+class FlowTool(Tool):
+    """Wraps a Flow (Team, Pipeline, HierarchicalTeam) as a Tool.
+
+    This allows nesting entire flows inside other agents or teams.
+    """
+
+    def __init__(
+        self,
+        flow: Any,  # Should be Flow, but avoiding circular imports or strict checks for now
+        name: str,
+        description: str,
+        parent_addr: MemoryAddress,
+    ):
+        self.flow = flow
+        self.parent_addr = parent_addr
+
+        schema = {
+            "name": f"call_{name.lower().replace(' ', '_')}",
+            "description": description[:1024],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instructions": {
+                        "type": "string",
+                        "description": "The specific task or instructions for this team/pipeline.",
+                    }
+                },
+                "required": ["instructions"],
+            },
+        }
+
+        super().__init__(schema, self._run_flow)
+
+    def _run_flow(self, instructions: str) -> Dict[str, Any]:
+        """Runs the wrapped flow."""
+
+        # We pass the same session/user IDs to maintain context continuity
+        # The flow itself handles its internal addressing
+        response = self.flow.run(
+            user_input=instructions,
+            session_id=self.parent_addr.conversation_id,
+            user_id=self.parent_addr.user_id,
+        )
+
+        # Consume generator if needed
+        if hasattr(response, "__iter__") and not isinstance(response, str):
+            response = "".join(list(response))
+
+        return {"response": response}

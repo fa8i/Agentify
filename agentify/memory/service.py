@@ -1,7 +1,32 @@
 from __future__ import annotations
+import logging
+import os
 from typing import Any, Dict, List, Optional
 from .interfaces import ConversationStore, MemoryAddress, Message
 from .policies import MemoryPolicy
+
+# Flag to enable/disable memory logging (can be controlled via env var)
+ENABLE_MEMORY_LOGS = os.getenv("AGENTIFY_MEMORY_LOGS", "true").lower()
+
+
+# ANSI color codes for terminal output
+class Colors:
+    RESET = "\033[0m"
+    BLUE = "\033[94m"  # system
+    GREEN = "\033[92m"  # user
+    YELLOW = "\033[93m"  # assistant
+    CYAN = "\033[96m"  # tool
+    MAGENTA = "\033[95m"  # tool calls
+    GRAY = "\033[90m"  # metadata
+
+
+# Configure logger with handler for terminal output
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 _ALLOWED_FIELDS = {"role", "content", "name", "tool_call_id", "metadata", "id", "ts"}
 
@@ -42,7 +67,36 @@ class MemoryService:
         """Append a dict message (OpenAI-ish) to the given address, normalizing extras."""
         msg = self._normalize_message(message)
         self.policy.on_append(addr, msg)
-        print(msg)
+
+        # Log message with color coding by role (only if enabled)
+        if ENABLE_MEMORY_LOGS:
+            role_colors = {
+                "system": Colors.BLUE,
+                "user": Colors.GREEN,
+                "assistant": Colors.YELLOW,
+                "tool": Colors.CYAN,
+            }
+
+            color = role_colors.get(msg.role, Colors.RESET)
+            content_preview = (
+                (msg.content[:100] + "...")
+                if msg.content and len(msg.content) > 100
+                else msg.content
+            )
+
+            tool_info = ""
+            if msg.metadata and "tool_calls" in msg.metadata:
+                tool_names = [
+                    tc.get("function", {}).get("name", "unknown")
+                    for tc in msg.metadata["tool_calls"]
+                ]
+                tool_info = (
+                    f"{Colors.MAGENTA} | tools: {', '.join(tool_names)}{Colors.RESET}"
+                )
+
+            logger.info(
+                f"{color}[{msg.role}]{Colors.RESET} {content_preview}{tool_info}"
+            )
 
     def reset_history(
         self, addr: MemoryAddress, system_message: Dict[str, Any]

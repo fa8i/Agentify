@@ -1,0 +1,82 @@
+from typing import List, Union, Generator, Any
+from agentify.core.agent import BaseAgent
+from agentify.memory.interfaces import MemoryAddress
+from agentify.multi_agent.team import Team
+
+# Type alias for what can be a step in the pipeline
+PipelineStep = Union[BaseAgent, Team, "SequentialPipeline", Any]
+
+
+class SequentialPipeline:
+    """Executes a sequence of agents/teams/pipelines in order.
+
+    The output of step N becomes the input of step N+1.
+    """
+
+    def __init__(self, steps: List[PipelineStep]):
+        if not steps:
+            raise ValueError("Pipeline must have at least one step.")
+        self.steps = steps
+
+    def run(
+        self,
+        user_input: str,
+        session_id: str = "default_session",
+        user_id: str = "default_user",
+    ) -> Union[str, Generator[str, None, None]]:
+        """Run the pipeline sequentially."""
+
+        current_input = user_input
+
+        # We'll collect the final result.
+        # If intermediate steps return generators, we consume them to pass string to next step.
+        # Only the LAST step's output is returned as-is (string or generator).
+
+        for i, step in enumerate(self.steps):
+            is_last_step = i == len(self.steps) - 1
+
+            # Determine step name for logging/memory
+            step_name = getattr(step, "name", f"step_{i}")
+            if hasattr(step, "config"):
+                step_name = step.config.name
+
+            # Create a specific address for this step execution
+            # Note: For Teams or nested Pipelines, they might manage their own internal addressing,
+            # but we pass these IDs so they can derive from them if needed.
+
+            # If the step is a BaseAgent, we can pass 'addr'.
+            # If it's a Team or another Pipeline, they accept session_id/user_id in run().
+
+            # We need a unified way to call 'run' or 'respond'.
+            # BaseAgent -> respond(user_input, addr=...)
+            # Team/Pipeline -> run(user_input, session_id=..., user_id=...)
+
+            response: Union[str, Generator[str, None, None]]
+
+            if isinstance(step, BaseAgent):
+                step_addr = MemoryAddress(
+                    user_id=user_id, conversation_id=session_id, agent_id=step_name
+                )
+                response = step.respond(user_input=current_input, addr=step_addr)
+
+            elif hasattr(step, "run"):
+                # Team, SequentialPipeline, HierarchicalTeam
+                response = step.run(
+                    user_input=current_input, session_id=session_id, user_id=user_id
+                )
+            else:
+                raise ValueError(
+                    f"Step {i} ({type(step)}) is not a valid agent or flow."
+                )
+
+            # If it's NOT the last step, we must consume the output to pass it to the next step.
+            if not is_last_step:
+                if hasattr(response, "__iter__") and not isinstance(response, str):
+                    current_input = "".join(list(response))
+                else:
+                    current_input = str(response)
+            else:
+                # Last step: return the response directly (stream or string)
+                return response
+
+        return current_input

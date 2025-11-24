@@ -2,7 +2,6 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from agentify.core import BaseAgent, AgentConfig
@@ -31,7 +30,7 @@ def create_planning_team():
         provider="deepseek",
         model_name="deepseek-chat",
         temperature=0.1,
-        max_tool_iter=7,
+        max_tool_iter=10,
     )
     researcher = BaseAgent(
         config=researcher_config,
