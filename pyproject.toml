@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentify-core"
-version = "0.1.1"
+version = "0.1.2"
 description = "Framework-agnostic AI agent library for building single and multi-agent systems"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -48,14 +48,14 @@ tools = [
 
 # UI y demos
 ui = [
-    "gradio>=3.0.0",
+    "gradio==5.49.1",
 ]
 
 # Todas las extensiones
 all = [
     "redis>=4.0.0",
     "requests>=2.25.0",
-    "gradio>=3.0.0",
+    "gradio==5.49.1",
 ]
 
 # Desarrollo y testing

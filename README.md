@@ -19,6 +19,10 @@ Agentify is a Python library for building and orchestrating AI agents, from simp
 - **Memory service and isolation**  
   Pluggable backends (in-memory, Redis, …) with per-use-case policies (TTL, maximum messages, etc.), plus optional memory isolation so each agent can maintain its own conversation history for scalability and privacy.
 
+- **Reasoning Models**  
+  Configure the model's thinking depth, safely merge `model_kwargs`, automatically store
+  "Chain of Thought" in conversation history, and log reasoning steps in real-time for visibility.
+
 - **Tools and actions**  
   Type-annotated tool interface, straightforward registration of custom tools.
 
@@ -53,10 +57,12 @@ addr = MemoryAddress(conversation_id="session_1")
 # 2. Create an Agent
 agent = BaseAgent(
     config=AgentConfig(
-        name="Assistant",
-        system_prompt="You are a helpful AI assistant.",
+        name="ReasoningAgent",
+        system_prompt="You are a helpful assistant.",
         provider="openai",
-        model_name="gpt-4.1-mini"
+        model_name="gpt-5",
+        reasoning_effort="high",  # optional param:"low", "medium", "high"
+        model_kwargs={"max_completion_tokens": 5000} # Pass model-specific params
     ),
     memory=memory,
     memory_address=addr
