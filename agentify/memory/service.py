@@ -4,16 +4,7 @@ import os
 from typing import Any, Dict, List, Optional
 from .interfaces import ConversationStore, MemoryAddress, Message
 from .policies import MemoryPolicy
-
-
-class Colors:
-    RESET = "\033[0m"
-    BLUE = "\033[94m"  # system
-    GREEN = "\033[92m"  # user
-    YELLOW = "\033[93m"  # assistant
-    CYAN = "\033[96m"  # tool
-    MAGENTA = "\033[95m"  # tool calls
-    GRAY = "\033[90m"  # metadata
+from agentify.utils.style import Colors
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +27,7 @@ class MemoryService:
         store: ConversationStore,
         policy: Optional[MemoryPolicy] = None,
         log_enabled: bool = True,
-        max_log_length: Optional[int] = 500,
+        max_log_length: Optional[int] = None,
     ) -> None:
         self.store = store
         self.policy = policy or MemoryPolicy(store)
@@ -104,6 +95,18 @@ class MemoryService:
             logger.info(
                 f"{Colors.GRAY}{agent_tag}{Colors.RESET}{color}[{msg.role}]{Colors.RESET} {content_preview}{tool_info}"
             )
+
+            # Log reasoning if present in metadata
+            if msg.metadata and "reasoning_content" in msg.metadata:
+                reasoning = msg.metadata["reasoning_content"]
+                if self.max_log_length is not None and len(reasoning) > self.max_log_length:
+                    reasoning_preview = reasoning[: self.max_log_length] + "..."
+                else:
+                    reasoning_preview = reasoning
+                
+                logger.info(
+                    f"{Colors.GRAY}{agent_tag}{Colors.RESET}{Colors.GRAY}[Reasoning]{Colors.RESET} {Colors.GRAY}{reasoning_preview}{Colors.RESET}"
+                )
 
     def reset_history(
         self, addr: MemoryAddress, system_message: Dict[str, Any]

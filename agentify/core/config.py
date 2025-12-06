@@ -17,11 +17,13 @@ class AgentConfig:
     system_prompt: str
     provider: str
     model_name: str
-    temperature: float = 0.5
+    temperature: float = 1
     timeout: int = 60
     stream: bool = False
     max_retries: int = 3
     max_tool_iter: int = 5
+    reasoning_effort: Optional[str] = None
+    model_kwargs: Optional[Dict[str, Any]] = None
     client_config_override: Optional[Dict[str, Any]] = None
     callbacks: list = None
 

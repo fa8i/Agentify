@@ -209,6 +209,14 @@ class BaseAgent:
             "temperature": self.config.temperature,
         }
 
+        if self.config.reasoning_effort:
+            common_params["reasoning_effort"] = self.config.reasoning_effort
+
+        if self.config.model_kwargs:
+            for k, v in self.config.model_kwargs.items():
+                if k not in common_params:
+                    common_params[k] = v
+
         # Only add tools if they exist
         tools_payload = self.tool_defs
         if tools_payload:
@@ -347,11 +355,12 @@ class BaseAgent:
     ) -> Generator[str, None, List[Dict[str, Any]]]:
         """
         Process streaming response, yielding content and collecting tool calls.
-        Returns the assembled tool calls.
+        Returns a tuple of (assembled tool calls, full reasoning content).
         """
         tool_call_assembler: Dict[int, Dict[str, Any]] = {}
 
         full_content = []
+        full_reasoning = []
 
         for chunk in response_stream:
             if not chunk.choices:
@@ -363,6 +372,12 @@ class BaseAgent:
                     cb.on_llm_new_token(delta.content)
                 full_content.append(delta.content)
                 yield delta.content
+
+            # Handle reasoning content if present (e.g. DeepSeek-R1)
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                for cb in self.callbacks:
+                    cb.on_reasoning_step(delta.reasoning_content)
+                full_reasoning.append(delta.reasoning_content)
 
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
@@ -401,13 +416,20 @@ class BaseAgent:
             if call_data.get("function", {}).get("name"):
                 assembled_tool_calls.append(call_data)
 
-        return assembled_tool_calls
+        return assembled_tool_calls, "".join(full_reasoning)
 
     def _process_sync_response(
         self, msg_object: Any
-    ) -> tuple[Optional[str], List[Dict[str, Any]]]:
-        """Process synchronous response, returning content and tool calls."""
+    ) -> tuple[Optional[str], List[Dict[str, Any]], Optional[str]]:
+        """Process synchronous response, returning content, tool calls, and reasoning content."""
         content = getattr(msg_object, "content", None)
+        
+        # Handle reasoning content if present
+        reasoning_content = getattr(msg_object, "reasoning_content", None)
+        if reasoning_content:
+            for cb in self.callbacks:
+                cb.on_reasoning_step(reasoning_content)
+
         tool_calls = []
 
         if getattr(msg_object, "tool_calls", None):
@@ -427,7 +449,7 @@ class BaseAgent:
                     }
                 )
 
-        return content, tool_calls
+        return content, tool_calls, reasoning_content
 
     def _expand_tool_calls(
         self, tool_calls: List[Dict[str, Any]]
@@ -509,6 +531,7 @@ class BaseAgent:
 
             current_turn_content_parts: List[str] = []
             assembled_tool_calls: List[Dict[str, Any]] = []
+            full_reasoning_content: Optional[str] = None
 
             if self.config.stream:
                 gen = self._process_stream_response(response_or_stream)  # type: ignore
@@ -518,9 +541,9 @@ class BaseAgent:
                         yield content_chunk
                         current_turn_content_parts.append(content_chunk)
                 except StopIteration as e:
-                    assembled_tool_calls = e.value
+                    assembled_tool_calls, full_reasoning_content = e.value
             else:
-                content, assembled_tool_calls = self._process_sync_response(
+                content, assembled_tool_calls, full_reasoning_content = self._process_sync_response(
                     response_or_stream
                 )
                 if content:
@@ -533,7 +556,12 @@ class BaseAgent:
 
             # If no tool calls, we are done
             if not assembled_tool_calls:
-                self.add(role="assistant", content=full_turn_content, addr=addr)
+                # Add reasoning to metadata if present
+                msg_kwargs = {}
+                if full_reasoning_content:
+                    msg_kwargs["metadata"] = {"reasoning_content": full_reasoning_content}
+                
+                self.add(role="assistant", content=full_turn_content, addr=addr, **msg_kwargs)
                 for cb in self.callbacks:
                     cb.on_agent_finish(self.config.name, full_turn_content)
                 break
@@ -543,6 +571,9 @@ class BaseAgent:
             if full_turn_content:
                 assistant_msg["content"] = full_turn_content
             assistant_msg["tool_calls"] = assembled_tool_calls
+            if full_reasoning_content:
+                assistant_msg["metadata"] = {"reasoning_content": full_reasoning_content}
+            
             self.add(addr=addr, **assistant_msg)
 
             # Execute tools
