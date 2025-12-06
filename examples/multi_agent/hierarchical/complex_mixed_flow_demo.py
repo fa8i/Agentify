@@ -41,7 +41,7 @@ try:
 except ImportError:
     pass
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
@@ -53,7 +53,8 @@ def create_complex_system():
     """Creates the complex multi-agent system with nested patterns."""
 
     # Shared memory service
-    memory = MemoryService(store=InMemoryStore())
+    store = InMemoryStore()
+    memory_service = MemoryService(store=store, log_enabled=True, max_log_length=200)
 
     # Level 3: Specialists
     # Design Team Members
@@ -69,7 +70,7 @@ def create_complex_system():
             model_name="deepseek-chat",
             temperature=0.6,
         ),
-        memory=memory,
+        memory=memory_service,
     )
 
     tech_writer = BaseAgent(
@@ -84,7 +85,7 @@ def create_complex_system():
             model_name="deepseek-chat",
             temperature=0.3,
         ),
-        memory=memory,
+        memory=memory_service,
     )
 
     # Dev Team Members
@@ -100,7 +101,7 @@ def create_complex_system():
             model_name="deepseek-chat",
             temperature=0.2,
         ),
-        memory=memory,
+        memory=memory_service,
     )
 
     frontend_dev = BaseAgent(
@@ -115,7 +116,7 @@ def create_complex_system():
             model_name="deepseek-chat",
             temperature=0.2,
         ),
-        memory=memory,
+        memory=memory_service,
     )
 
     # QA Engineer (standalone)
@@ -132,7 +133,7 @@ def create_complex_system():
             model_name="deepseek-chat",
             temperature=0.4,
         ),
-        memory=memory,
+        memory=memory_service,
     )
 
     # Level 2: Team Leads
@@ -152,7 +153,7 @@ def create_complex_system():
             temperature=0.3,
             max_tool_iter=5,
         ),
-        memory=memory,
+        memory=memory_service,
     )
 
     # Tech Lead (supervises Dev Team)
@@ -170,7 +171,7 @@ def create_complex_system():
             temperature=0.3,
             max_tool_iter=5,
         ),
-        memory=memory,
+        memory=memory_service,
     )
 
     # Level 1: Teams
@@ -206,7 +207,7 @@ def create_complex_system():
             temperature=0.4,
             max_tool_iter=8,
         ),
-        memory=memory,
+        memory=memory_service,
     )
 
     # Hierarchical Assembly
@@ -232,7 +233,7 @@ def run_complex_flow():
     """Executes the complex multi-agent workflow."""
 
     print("=" * 80)
-    print("COMPLEX MULTI-AGENT FLOW DEMO (FIXED)")
+    print("COMPLEX MULTI-AGENT FLOW DEMO")
     print("=" * 80)
     print("\nInitializing system with 7 agents in nested structure...")
     print("  - ProductOwner (root)")

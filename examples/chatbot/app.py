@@ -45,13 +45,6 @@ PROVIDER_MODELS = {
 store = InMemoryStore()
 policy = MemoryPolicy(store, ttl_seconds=None, max_user_msgs=6, max_assistant_msgs=6)
 memory = MemoryService(store, policy)
-addr = MemoryAddress(
-    api_version="v0",
-    tenant_id="faBi",
-    user_id="fa8i",
-    conversation_id="F-481",
-    agent_id="fa8i-assistant",
-)
 
 
 def create_agent_instance(
@@ -75,12 +68,20 @@ def create_agent_instance(
         timeout=timeout_val,
         stream=stream_val,
     )
+    # Build a fresh MemoryAddress for this agent instance so the logs show the agent's name.
+    agent_addr = MemoryAddress(
+        api_version="",
+        tenant_id="",
+        user_id="",
+        conversation_id="",
+        agent_id=name_val or "agent",
+    )
     return BaseAgent(
         config=config,
         tools=tools,
         client_factory=LLMClientFactory(),
         memory=memory,
-        memory_address=addr,
+        memory_address=agent_addr,
     )
 
 

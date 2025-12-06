@@ -2,7 +2,7 @@ import os
 import sys
 from dotenv import load_dotenv
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
@@ -14,7 +14,8 @@ load_dotenv()
 
 
 def create_demo_team():
-    memory = MemoryService(store=InMemoryStore())
+    store = InMemoryStore()
+    memory_service = MemoryService(store=store, log_enabled=True, max_log_length=200)
 
     # 1. Create Worker: Researcher (has tools)
     researcher_config = AgentConfig(
@@ -26,7 +27,7 @@ def create_demo_team():
     )
     researcher = BaseAgent(
         config=researcher_config,
-        memory=memory,
+        memory=memory_service,
         tools=[get_current_time_tool, calculate_expression_tool],
     )
 
@@ -40,7 +41,7 @@ def create_demo_team():
     )
     manager = BaseAgent(
         config=manager_config,
-        memory=memory,
+        memory=memory_service,
     )
 
     # 3. Create Team

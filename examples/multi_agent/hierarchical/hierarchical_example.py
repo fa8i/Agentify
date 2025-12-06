@@ -1,7 +1,7 @@
 import os
 import sys
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
@@ -11,7 +11,7 @@ from agentify.multi_agent import HierarchicalTeam
 
 def main():
     store = InMemoryStore()
-    memory_service = MemoryService(store=store)
+    memory_service = MemoryService(store=store, log_enabled=True, max_log_length=200)
 
     # 1. Define Agents
 
