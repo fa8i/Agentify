@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Protocol
 import logging
+from agentify.utils.style import Colors
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,10 @@ class AgentCallbackHandler(Protocol):
         """Called when the LLM finishes generating a response."""
         ...
 
+    def on_reasoning_step(self, content: str) -> None:
+        """Called when the LLM generates a reasoning step."""
+        ...
+
     def on_error(self, error: Exception, context: str) -> None:
         """Called when an error occurs."""
         ...
@@ -68,6 +73,11 @@ class LoggingCallbackHandler(AgentCallbackHandler):
 
     def on_llm_end(self, response: Any) -> None:
         self.logger.debug("LLM finished.")
+
+    def on_reasoning_step(self, content: str) -> None:
+        self.logger.info(
+            f"{Colors.GRAY}[Reasoning]{Colors.RESET} {Colors.GRAY}{content}{Colors.RESET}"
+        )
 
     def on_error(self, error: Exception, context: str) -> None:
         self.logger.error(f"Error in {context}: {error}", exc_info=True)
