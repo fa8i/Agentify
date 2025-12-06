@@ -5,11 +5,7 @@ from typing import Any, Dict, List, Optional
 from .interfaces import ConversationStore, MemoryAddress, Message
 from .policies import MemoryPolicy
 
-# Flag to enable/disable memory logging (can be controlled via env var)
-ENABLE_MEMORY_LOGS = os.getenv("AGENTIFY_MEMORY_LOGS", "true").lower()
 
-
-# ANSI color codes for terminal output
 class Colors:
     RESET = "\033[0m"
     BLUE = "\033[94m"  # system
@@ -20,7 +16,6 @@ class Colors:
     GRAY = "\033[90m"  # metadata
 
 
-# Configure logger with handler for terminal output
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -37,10 +32,16 @@ class MemoryService:
     """
 
     def __init__(
-        self, store: ConversationStore, policy: Optional[MemoryPolicy] = None
+        self,
+        store: ConversationStore,
+        policy: Optional[MemoryPolicy] = None,
+        log_enabled: bool = True,
+        max_log_length: Optional[int] = 500,
     ) -> None:
         self.store = store
         self.policy = policy or MemoryPolicy(store)
+        self.log_enabled = log_enabled
+        self.max_log_length = max_log_length # max length preview of the log
 
     def _normalize_message(self, message: Dict[str, Any]) -> Message:
         """Accept OpenAI-shaped dicts; move unknown keys (e.g., 'tool_calls') into metadata.
@@ -67,7 +68,7 @@ class MemoryService:
         self.policy.on_append(addr, msg)
 
         # Log message with color coding by role (only if enabled)
-        if ENABLE_MEMORY_LOGS:
+        if self.log_enabled:
             role_colors = {
                 "system": Colors.BLUE,
                 "user": Colors.GREEN,
@@ -76,11 +77,19 @@ class MemoryService:
             }
 
             color = role_colors.get(msg.role, Colors.RESET)
-            content_preview = (
-                (msg.content[:100] + "...")
-                if msg.content and len(msg.content) > 100
-                else msg.content
-            )
+            
+            # Extract agent_id if available to show WHO is speaking
+            agent_id = addr.agent_id if addr and addr.agent_id else "unknown"
+            agent_tag = f"[{agent_id}]" if agent_id else ""
+
+            if self.max_log_length is None:
+                content_preview = msg.content
+            else:
+                content_preview = (
+                    (msg.content[: self.max_log_length] + "...")
+                    if msg.content and len(msg.content) > self.max_log_length
+                    else msg.content
+                )
 
             tool_info = ""
             if msg.metadata and "tool_calls" in msg.metadata:
@@ -93,7 +102,7 @@ class MemoryService:
                 )
 
             logger.info(
-                f"{color}[{msg.role}]{Colors.RESET} {content_preview}{tool_info}"
+                f"{Colors.GRAY}{agent_tag}{Colors.RESET}{color}[{msg.role}]{Colors.RESET} {content_preview}{tool_info}"
             )
 
     def reset_history(
