@@ -54,7 +54,7 @@ def create_complex_system():
 
     # Shared memory service
     store = InMemoryStore()
-    memory_service = MemoryService(store=store, log_enabled=True, max_log_length=200)
+    memory_service = MemoryService(store=store, log_enabled=True)
 
     # Level 3: Specialists
     # Design Team Members
@@ -67,8 +67,10 @@ def create_complex_system():
                 "Be brief and practical."
             ),
             provider="deepseek",
-            model_name="deepseek-chat",
+            model_name="deepseek-reasoner",
+            reasoning_effort="high",
             temperature=0.6,
+            model_kwargs={"max_completion_tokens": 5000}
         ),
         memory=memory_service,
     )
@@ -82,7 +84,8 @@ def create_complex_system():
                 "Be concise and technical."
             ),
             provider="deepseek",
-            model_name="deepseek-chat",
+            model_name="deepseek-reasoner",
+            reasoning_effort="high",
             temperature=0.3,
         ),
         memory=memory_service,
@@ -98,7 +101,8 @@ def create_complex_system():
                 "Provide code snippets with brief explanations."
             ),
             provider="deepseek",
-            model_name="deepseek-chat",
+            model_name="deepseek-reasoner",
+            reasoning_effort="high",
             temperature=0.2,
         ),
         memory=memory_service,
@@ -113,7 +117,8 @@ def create_complex_system():
                 "Focus on practical implementations."
             ),
             provider="deepseek",
-            model_name="deepseek-chat",
+            model_name="deepseek-reasoner",
+            reasoning_effort="high",
             temperature=0.2,
         ),
         memory=memory_service,
@@ -130,7 +135,8 @@ def create_complex_system():
                 "Be critical but constructive."
             ),
             provider="deepseek",
-            model_name="deepseek-chat",
+            model_name="deepseek-reasoner",
+            reasoning_effort="high",
             temperature=0.4,
         ),
         memory=memory_service,
@@ -149,7 +155,8 @@ def create_complex_system():
                 "Don't reveal that you're delegating; present a unified result."
             ),
             provider="deepseek",
-            model_name="deepseek-chat",
+            model_name="deepseek-reasoner",
+            reasoning_effort="high",
             temperature=0.3,
             max_tool_iter=5,
         ),
@@ -167,7 +174,8 @@ def create_complex_system():
                 "Present the final code as a unified delivery."
             ),
             provider="deepseek",
-            model_name="deepseek-chat",
+            model_name="deepseek-reasoner",
+            reasoning_effort="high",
             temperature=0.3,
             max_tool_iter=5,
         ),
