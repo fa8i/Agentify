@@ -11,7 +11,7 @@ Pillow>=9.0.0
 # requests>=2.25.0
 
 # For UI/demos: pip install agentify[ui]
-# gradio>=3.0.0
+gradio==5.49.1
 
 # Install all optional dependencies: pip install agentify[all]
 

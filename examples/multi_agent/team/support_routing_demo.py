@@ -2,7 +2,7 @@ import os
 import sys
 from dotenv import load_dotenv
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
@@ -14,7 +14,8 @@ load_dotenv()
 
 
 def create_support_team():
-    memory = MemoryService(store=InMemoryStore())
+    store = InMemoryStore()
+    memory_service = MemoryService(store=store, log_enabled=True, max_log_length=200)
 
     # --- Workers ---
 
@@ -31,7 +32,7 @@ def create_support_team():
     )
     billing_agent = BaseAgent(
         config=billing_config,
-        memory=memory,
+        memory=memory_service,
     )
 
     tech_config = AgentConfig(
@@ -47,7 +48,7 @@ def create_support_team():
     )
     tech_agent = BaseAgent(
         config=tech_config,
-        memory=memory,
+        memory=memory_service,
         tools=[get_current_time_tool, calculate_expression_tool],
     )
 
@@ -64,7 +65,7 @@ def create_support_team():
     )
     success_agent = BaseAgent(
         config=success_config,
-        memory=memory,
+        memory=memory_service,
     )
 
     # --- Supervisor / Router ---
@@ -88,7 +89,7 @@ def create_support_team():
 
     router_agent = BaseAgent(
         config=router_config,
-        memory=memory,
+        memory=memory_service,
     )
 
     # Team con topología plana: Router -> [Billing, Tech, Success]

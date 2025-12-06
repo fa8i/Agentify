@@ -47,7 +47,7 @@ from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress
 from agentify.memory.stores import InMemoryStore
 
 # 1. Create memory service
-memory = MemoryService(store=InMemoryStore())
+memory = MemoryService(store=InMemoryStore(), log_enabled=True, max_log_length=100)
 addr = MemoryAddress(conversation_id="session_1")
 
 # 2. Create an Agent
