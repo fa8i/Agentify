@@ -5,7 +5,8 @@ import time
 import uuid
 import base64
 from io import BytesIO
-from typing import Any, Dict, Generator, List, Optional, Union, Iterator
+import inspect
+from typing import Any, Dict, Generator, List, Optional, Union, Iterator, Callable
 
 from PIL import Image
 from openai import RateLimitError
@@ -21,7 +22,20 @@ logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
-    """Framework-agnostic AI Agent core class."""
+    """Framework-agnostic AI Agent core class.
+    
+    Attributes:
+        pre_hooks (List[Callable]): Functions to execute before the agent loop starts.
+            Supported arguments for injection:
+            - `agent`: The BaseAgent instance.
+            - `user_input`: The user's input string.
+            
+        post_hooks (List[Callable]): Functions to execute after the agent loop finishes.
+            Supported arguments for injection:
+            - `agent`: The BaseAgent instance.
+            - `user_input`: The user's input string.
+            - `response`: The final accumulated response string.
+    """
 
     def __init__(
         self,
@@ -32,11 +46,15 @@ class BaseAgent:
         client_factory: Optional[LLMClientFactory] = None,
         tools: Optional[List[Tool]] = None,
         image_config: Optional[ImageConfig] = None,
+        pre_hooks: Optional[List[Callable]] = None,
+        post_hooks: Optional[List[Callable]] = None,
     ) -> None:
         self.config = config
         self.memory = memory
         self.memory_address = memory_address
         self.image_config = image_config or ImageConfig()
+        self.pre_hooks = pre_hooks or []
+        self.post_hooks = post_hooks or []
 
         # Decouple callbacks from config to avoid mutation of shared config
         self.callbacks = list(self.config.callbacks) if self.config.callbacks else []
@@ -195,6 +213,28 @@ class BaseAgent:
         self.memory.reset_history(a, messages[0])
         for m in messages[1:]:
             self.memory.append_history(a, m)
+
+    # Hook Execution
+    def _execute_hook(self, hook: Callable, **kwargs: Any) -> None:
+        """Execute a hook injecting only the arguments it declares."""
+        try:
+            sig = inspect.signature(hook)
+            # Filter kwargs to only those present in the hook's signature
+            # If the hook accepts **kwargs, pass everything
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            
+            if has_var_keyword:
+                hook_kwargs = kwargs
+            else:
+                hook_kwargs = {
+                    k: v for k, v in kwargs.items() if k in sig.parameters
+                }
+            
+            hook(**hook_kwargs)
+        except Exception as e:
+            logger.error(f"Error executing hook '{hook.__name__}': {e}", exc_info=True)
 
     # Core Logic
 
@@ -518,6 +558,9 @@ class BaseAgent:
         for cb in self.callbacks:
             cb.on_agent_start(self.config.name, user_input)
 
+        for hook in self.pre_hooks:
+            self._execute_hook(hook, agent=self, user_input=user_input)
+
         user_content = self._build_user_content(
             user_input,
             image_path=image_path,
@@ -525,6 +568,8 @@ class BaseAgent:
         )
         if user_content is not None:
             self.add(role="user", content=user_content, addr=addr)
+
+        accumulated_response: List[str] = []
 
         for _ in range(self.config.max_tool_iter):
             response_or_stream = self._get_llm_response(addr=addr)
@@ -540,6 +585,7 @@ class BaseAgent:
                         content_chunk = next(gen)
                         yield content_chunk
                         current_turn_content_parts.append(content_chunk)
+                        accumulated_response.append(content_chunk)
                 except StopIteration as e:
                     assembled_tool_calls, full_reasoning_content = e.value
             else:
@@ -549,6 +595,7 @@ class BaseAgent:
                 if content:
                     yield content
                     current_turn_content_parts.append(content)
+                    accumulated_response.append(content)
 
             # Expand tool calls (fix for some models)
             assembled_tool_calls = self._expand_tool_calls(assembled_tool_calls)
@@ -602,10 +649,17 @@ class BaseAgent:
             for cb in self.callbacks:
                 cb.on_agent_finish(self.config.name, warn_msg)
             yield warn_msg
+            accumulated_response.append(warn_msg)
+
+        full_response = "".join(accumulated_response)
+        for hook in self.post_hooks:
+            self._execute_hook(
+                hook, agent=self, user_input=user_input, response=full_response
+            )
 
     # Public entrypoint
 
-    def respond(
+    def run(
         self,
         user_input: str,
         *,
@@ -613,7 +667,17 @@ class BaseAgent:
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
     ) -> Union[str, Generator[str, None, None]]:
-        """Main entrypoint to interact with the agent."""
+        """Main entrypoint to interact with the agent.
+        
+        Args:
+            user_input: The text input from the user.
+            addr: The memory address for the conversation.
+            image_path: Optional path to an image file.
+            image_detail_override: Optional detail level for image processing.
+            
+        Returns:
+            The agent's response as a string or a generator if streaming is enabled.
+        """
         a = self._addr_or_raise(addr)
         response_generator = self._execute_agent_loop(
             user_input,
@@ -627,6 +691,28 @@ class BaseAgent:
 
         parts: List[str] = list(response_generator)
         return "".join(parts).strip()
+
+    def respond(
+        self,
+        user_input: str,
+        *,
+        addr: Optional[MemoryAddress] = None,
+        image_path: Optional[str] = None,
+        image_detail_override: Optional[str] = None,
+    ) -> Union[str, Generator[str, None, None]]:
+        """Deprecated alias for `run`."""
+        import warnings
+        warnings.warn(
+            "The `respond` method is deprecated and will be removed in a future version. Use `run` instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        return self.run(
+            user_input,
+            addr=addr,
+            image_path=image_path,
+            image_detail_override=image_detail_override,
+        )
 
     # Tool registry management
 
