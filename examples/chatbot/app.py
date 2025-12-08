@@ -6,15 +6,15 @@ from agentify.core import BaseAgent, AgentConfig
 from agentify.llm import LLMClientFactory
 from agentify.extensions.prompts import assistant_prompt
 from agentify.extensions.tools import (
-    get_current_time_tool,
-    calculate_expression_tool,
-    get_weather_tool,
+    TimeTool,
+    CalculatorTool,
+    WeatherTool,
 )
 
-BUILTIN_TOOLS = {
-    "get_current_time": get_current_time_tool,
-    "calculate_expression": calculate_expression_tool,
-    "get_weather": get_weather_tool,
+BUILTIN_TOOLS_REGISTRY = {
+    "get_current_time": TimeTool(),
+    "calculate_expression": CalculatorTool(),
+    "get_weather": WeatherTool(),
 }
 
 PROVIDERS = ["azure", "openai", "deepseek", "gemini", "anthropic", "llama"]
@@ -58,7 +58,7 @@ def create_agent_instance(
 ):
     """Create a new agent instance with the specified parameters."""
     tools_val = selected_tools_val or []
-    tools = [BUILTIN_TOOLS[t] for t in tools_val if t in BUILTIN_TOOLS]
+    tools = [BUILTIN_TOOLS_REGISTRY[t] for t in tools_val if t in BUILTIN_TOOLS_REGISTRY]
     config = AgentConfig(
         name=name_val or "GradioAgent",
         system_prompt=assistant_prompt,
@@ -118,9 +118,9 @@ def stream_response_to_chatbot(
     yield chat_history_list
 
     try:
-        response_stream = agent_instance.respond(message, image_path=image_path)
+        response_stream = agent_instance.run(message, image_path=image_path)
     except TypeError:
-        response_stream = agent_instance.respond(message)
+        response_stream = agent_instance.run(message)
 
     if isinstance(response_stream, str):
         placeholder.content = response_stream
@@ -176,7 +176,7 @@ def build_interface():
             # Available tools
             tools_checkbox_group = gr.CheckboxGroup(
                 label="Available Tools",
-                choices=list(BUILTIN_TOOLS.keys()),
+                choices=list(BUILTIN_TOOLS_REGISTRY.keys()),
                 value=["get_current_time", "calculate_expression", "get_weather"],
             )
 

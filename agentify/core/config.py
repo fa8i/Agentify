@@ -21,7 +21,7 @@ class AgentConfig:
     timeout: int = 60
     stream: bool = False
     max_retries: int = 3
-    max_tool_iter: int = 5
+    max_tool_iter: Optional[int] = 10
     reasoning_effort: Optional[str] = None
     model_kwargs: Optional[Dict[str, Any]] = None
     client_config_override: Optional[Dict[str, Any]] = None

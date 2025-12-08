@@ -57,7 +57,7 @@ class AgentTool(Tool):
         )
 
         # Run the agent
-        response = self.agent.respond(user_input=instructions, addr=child_addr)
+        response = self.agent.run(user_input=instructions, addr=child_addr)
 
         # Consume generator if needed
         if hasattr(response, "__iter__") and not isinstance(response, str):
@@ -122,3 +122,88 @@ class FlowTool(Tool):
             response = "".join(list(response))
 
         return {"response": response}
+
+
+class SpawnAgentTool(Tool):
+    """Tool to dynamically spawn a transient sub-agent for a specific task."""
+
+    def __init__(
+        self,
+        base_config: Any,  # AgentConfig type ideally, but Any to avoid circular imports context
+        memory_service: Any, # MemoryService
+        parent_addr: MemoryAddress,
+        client_factory: Optional[Any] = None,
+    ):
+        self.base_config = base_config
+        self.memory_service = memory_service
+        self.parent_addr = parent_addr
+        self.client_factory = client_factory
+
+        schema = {
+            "name": "spawn_subagent",
+            "description": "Spawn a temporary specialized sub-agent to handle a complex sub-task.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "role_name": {
+                        "type": "string",
+                        "description": "Name of the sub-agent (e.g., 'ResearchAssistant').",
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": "Specific task instructions for the sub-agent.",
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "description": "System prompt defining the sub-agent's persona and constraints.",
+                    }
+                },
+                "required": ["role_name", "instructions"],
+            },
+        }
+        super().__init__(schema, self._spawn_and_run)
+
+    def _spawn_and_run(
+        self, 
+        role_name: str, 
+        instructions: str, 
+        system_prompt: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Creates and runs a new agent instance."""
+        from agentify.core.agent import BaseAgent
+        from agentify.core.config import AgentConfig
+        import copy
+
+        # Clone config but override name and system prompt
+        # Assuming base_config is an AgentConfig object or similar dataclass
+        new_config = copy.deepcopy(self.base_config)
+        new_config.name = f"{self.base_config.name}.{role_name}"
+        if system_prompt:
+            new_config.system_prompt = system_prompt
+        
+        # Create a unique address for this interaction
+        child_addr = MemoryAddress(
+            user_id=self.parent_addr.user_id,
+            conversation_id=f"{self.parent_addr.conversation_id}_{role_name}_{instructions[:10]}", # Unique-ish
+            agent_id=new_config.name,
+        )
+
+        # Create the agent
+        sub_agent = BaseAgent(
+            config=new_config,
+            memory=self.memory_service,
+            memory_address=child_addr,
+            client_factory=self.client_factory
+        )
+
+        response = sub_agent.run(user_input=instructions)
+        
+        # Consume generator if needed
+        if hasattr(response, "__iter__") and not isinstance(response, str):
+            response = "".join(list(response))
+
+        return {
+            "subagent": role_name,
+            "status": "finished",
+            "response": response
+        }

@@ -62,7 +62,7 @@ def test_agent_callbacks(agent_config, memory_service, memory_address):
         client_factory=mock_factory
     )
     
-    agent.respond("Hi")
+    agent.run("Hi")
     
     assert ("agent_start", "TestAgent") in callback.events
     assert ("agent_finish", "Hello") in callback.events
@@ -105,7 +105,7 @@ def test_tool_execution(agent_config, memory_service, memory_address):
         client_factory=mock_factory
     )
     
-    response = agent.respond("Double 21")
+    response = agent.run("Double 21")
     
     assert response == "The answer is 42"
     

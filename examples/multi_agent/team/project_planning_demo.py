@@ -8,7 +8,7 @@ from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.multi_agent import Team
-from agentify.extensions.tools import get_current_time_tool, calculate_expression_tool
+from agentify.extensions.tools import TimeTool, CalculatorTool
 
 load_dotenv()
 
@@ -17,7 +17,7 @@ def create_planning_team():
     store = InMemoryStore()
     memory = MemoryService(store=store, log_enabled=True, max_log_length=200)
 
-    # --- Worker 1: Investigador técnico con tools ---
+    # --- Worker 1: Infrastructure Researcher ---
 
     researcher_config = AgentConfig(
         name="InfraResearcher",
@@ -36,10 +36,10 @@ def create_planning_team():
     researcher = BaseAgent(
         config=researcher_config,
         memory=memory,
-        tools=[calculate_expression_tool, get_current_time_tool],
+        tools=[CalculatorTool(), TimeTool()],
     )
 
-    # --- Worker 2: Redactor ejecutivo ---
+    # --- Worker 2: Executive Writer ---
 
     writer_config = AgentConfig(
         name="ExecutiveWriter",

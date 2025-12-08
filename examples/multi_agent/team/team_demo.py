@@ -8,7 +8,7 @@ from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.multi_agent import Team
-from agentify.extensions.tools import get_current_time_tool, calculate_expression_tool
+from agentify.extensions.tools import TimeTool, CalculatorTool
 
 load_dotenv()
 
@@ -28,7 +28,7 @@ def create_demo_team():
     researcher = BaseAgent(
         config=researcher_config,
         memory=memory_service,
-        tools=[get_current_time_tool, calculate_expression_tool],
+        tools=[TimeTool(), CalculatorTool()],
     )
 
     # 2. Create Supervisor: Manager (no tools initially, will get Researcher as tool)

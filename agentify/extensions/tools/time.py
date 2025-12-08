@@ -2,20 +2,21 @@ from agentify.core.tool import Tool
 import datetime
 
 
-get_current_time_schema = {
-    "name": "get_current_time",
-    "description": "Devuelve la hora y fecha actual en formato ISO 8601.",
-    "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    },
-}
+class TimeTool(Tool):
+    """Tool for getting current date and time."""
 
+    def __init__(self):
+        schema = {
+            "name": "get_current_time",
+            "description": "Devuelve la hora y fecha actual en formato ISO 8601.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        }
+        super().__init__(schema, self._get_current_time)
 
-def get_current_time():
-    now = datetime.datetime.now().astimezone().isoformat()
-    return {"current_time": now}
-
-
-get_current_time_tool = Tool(get_current_time_schema, get_current_time)
+    def _get_current_time(self):
+        now = datetime.datetime.now().astimezone().isoformat()
+        return {"current_time": now}

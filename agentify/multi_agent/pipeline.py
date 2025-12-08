@@ -1,4 +1,5 @@
 from typing import List, Union, Generator, Any
+
 from agentify.core.agent import BaseAgent
 from agentify.memory.interfaces import MemoryAddress
 from agentify.multi_agent.team import Team
@@ -43,7 +44,7 @@ class SequentialPipeline:
                 step_addr = MemoryAddress(
                     user_id=user_id, conversation_id=session_id, agent_id=step_name
                 )
-                response = step.respond(user_input=current_input, addr=step_addr)
+                response = step.run(user_input=current_input, addr=step_addr)
 
             elif hasattr(step, "run"):
                 # Team, SequentialPipeline, HierarchicalTeam

@@ -1,8 +1,9 @@
 # Agentify
 
-**Framework-agnostic AI agent library for building single and multi-agent systems**
+**Independent AI agent library based on the OpenAI SDK**
 
-Agentify is a Python library for building and orchestrating AI agents, from simple assistants to complex multi-agent systems. It focuses on a small set of composable primitives for LLM integration, memory, tools and coordination, so you can focus on product logic instead of framework details.
+Agentify is a Python library for building and orchestrating AI agents, from simple assistants to complex multi-agent systems. It targets the OpenAI-compatible Chat Completions interface, enabling support for multiple providers through a configurable `base_url` (OpenAI, Azure OpenAI, DeepSeek, Gemini, etc.). Agentify offers a streamlined, independent set of primitives for memory, tools, and coordination so you can focus on product logic without being tied to heavy frameworks.
+
 
 ## Why Agentify?
 
@@ -69,7 +70,7 @@ agent = BaseAgent(
 )
 
 # 3. Run a conversation
-response = agent.respond(user_input="Hello! How can you help me?")
+response = agent.run(user_input="Hello! How can you help me?")
 ```
 
 ## Composable Flows
@@ -84,6 +85,15 @@ Agentify provides powerful primitives that can be combined to build arbitrarily 
 Because all flows share the same `run()` interface, you can build Teams made of Pipelines, Pipelines made of Teams, and deeply nested Hierarchies.
 
 Agentify supports both **strict workflows** (fixed, pre-defined Pipelines and Hierarchies) and **dynamic agentic flows**, where a supervisor/router agent decides at runtime which agent, Team or Pipeline to call next.
+
+
+## Documentation
+
+- [Getting Started](docs/getting_started.md) - Installation and first steps
+- [Core Concepts](docs/core_concepts.md) - Agents, memory, and tools
+- [Multi-Agent Systems](docs/multi_agent.md) - Teams, pipelines, and hierarchies
+- [Advanced Features](docs/advanced.md) - Vision, streaming, hooks, and more
+- [API Reference](docs/api_reference.md) - Complete API documentation
 
 
 ### More Examples
