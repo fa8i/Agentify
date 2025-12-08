@@ -574,7 +574,12 @@ class BaseAgent:
 
         accumulated_response: List[str] = []
 
-        for _ in range(self.config.max_tool_iter):
+        iteration_count = 0
+        while True:
+            if self.config.max_tool_iter is not None and iteration_count >= self.config.max_tool_iter:
+                break
+            iteration_count += 1
+
             response_or_stream = self._get_llm_response(addr=addr)
 
             current_turn_content_parts: List[str] = []
