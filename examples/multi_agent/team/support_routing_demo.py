@@ -8,7 +8,7 @@ from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.multi_agent import Team
-from agentify.extensions.tools import get_current_time_tool, calculate_expression_tool
+from agentify.extensions.tools import TimeTool, CalculatorTool
 
 load_dotenv()
 
@@ -49,7 +49,7 @@ def create_support_team():
     tech_agent = BaseAgent(
         config=tech_config,
         memory=memory_service,
-        tools=[get_current_time_tool, calculate_expression_tool],
+        tools=[TimeTool(), CalculatorTool()],
     )
 
     success_config = AgentConfig(
@@ -92,7 +92,7 @@ def create_support_team():
         memory=memory_service,
     )
 
-    # Team con topología plana: Router -> [Billing, Tech, Success]
+    # Team with flat topology: Router -> [Billing, Tech, Success]
     team = Team(
         agents=[router_agent, billing_agent, tech_agent, success_agent],
         supervisor=router_agent,
