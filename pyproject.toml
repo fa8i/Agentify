@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentify-core"
-version = "0.1.2"
+version = "0.1.4"
 description = "Framework-agnostic AI agent library for building single and multi-agent systems"
-readme = "README.md"
-requires-python = ">=3.9"
+readme = "README_PYPI.md"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Fabian M", email = "fabian@example.com"}
@@ -83,10 +83,10 @@ agentify = ["py.typed"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311']
+target-version = ['py310', 'py311']
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
