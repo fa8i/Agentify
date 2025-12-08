@@ -21,8 +21,8 @@ from agentify.core.callbacks import LoggingCallbackHandler
 logger = logging.getLogger(__name__)
 
 
-class BaseAgent:
-    """AI Agent core class based on the OpenAI SDK.
+class BaseAgent
+    """AI Agent core class based on chat completions interface.
     
     This class provides a unified interface for interacting with various LLM providers
     that are compatible with the OpenAI SDK format.
