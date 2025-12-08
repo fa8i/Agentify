@@ -110,8 +110,3 @@ Check out the [examples](examples/) directory for detailed implementations:
 
 - **Fabian Melchor** [fabianmp_98@hotmail.com](mailto:fabianmp_98@hotmail.com)
 
-
-## Links
-
-- **Repository**: https://github.com/fa8i/Agentify
-- **Issues**: https://github.com/fa8i/Agentify/issues
