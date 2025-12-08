@@ -60,8 +60,8 @@ agent = BaseAgent(
     config=AgentConfig(
         name="ReasoningAgent",
         system_prompt="You are a helpful assistant.",
-        provider="openai",
-        model_name="gpt-5",
+        provider="provider",
+        model_name="model",
         reasoning_effort="high",  # optional param:"low", "medium", "high"
         model_kwargs={"max_completion_tokens": 5000} # Pass model-specific params
     ),
