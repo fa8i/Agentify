@@ -87,6 +87,15 @@ Because all flows share the same `run()` interface, you can build Teams made of 
 Agentify supports both **strict workflows** (fixed, pre-defined Pipelines and Hierarchies) and **dynamic agentic flows**, where a supervisor/router agent decides at runtime which agent, Team or Pipeline to call next.
 
 
+## Documentation
+
+- [Getting Started](docs/getting_started.md) - Installation and first steps
+- [Core Concepts](docs/core_concepts.md) - Agents, memory, and tools
+- [Multi-Agent Systems](docs/multi_agent.md) - Teams, pipelines, and hierarchies
+- [Advanced Features](docs/advanced.md) - Vision, streaming, hooks, and more
+- [API Reference](docs/api_reference.md) - Complete API documentation
+
+
 ### More Examples
 
 Check out the [examples](examples/) directory for detailed implementations:
