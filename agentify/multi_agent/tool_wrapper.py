@@ -57,7 +57,7 @@ class AgentTool(Tool):
         )
 
         # Run the agent
-        response = self.agent.respond(user_input=instructions, addr=child_addr)
+        response = self.agent.run(user_input=instructions, addr=child_addr)
 
         # Consume generator if needed
         if hasattr(response, "__iter__") and not isinstance(response, str):

@@ -59,4 +59,4 @@ class Team:
             self.supervisor.register_tool(tool_wrapper)
 
         # 3. Run Supervisor
-        return self.supervisor.respond(user_input=user_input, addr=supervisor_addr)
+        return self.supervisor.run(user_input=user_input, addr=supervisor_addr)

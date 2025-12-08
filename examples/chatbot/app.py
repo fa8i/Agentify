@@ -118,9 +118,9 @@ def stream_response_to_chatbot(
     yield chat_history_list
 
     try:
-        response_stream = agent_instance.respond(message, image_path=image_path)
+        response_stream = agent_instance.run(message, image_path=image_path)
     except TypeError:
-        response_stream = agent_instance.respond(message)
+        response_stream = agent_instance.run(message)
 
     if isinstance(response_stream, str):
         placeholder.content = response_stream

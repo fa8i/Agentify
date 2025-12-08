@@ -2,7 +2,7 @@ import pytest
 from typing import List, Dict, Any
 from agentify.memory.interfaces import MemoryAddress, Message, ConversationStore
 from agentify.memory.service import MemoryService
-from agentify.config import AgentConfig
+from agentify.core.config import AgentConfig
 
 class InMemoryStore:
     def __init__(self):

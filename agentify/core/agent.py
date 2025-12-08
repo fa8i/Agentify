@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
-    """Framework-agnostic AI Agent core class.
+    """AI Agent core class based on the OpenAI SDK.
+    
+    This class provides a unified interface for interacting with various LLM providers
+    that are compatible with the OpenAI SDK format.
     
     Attributes:
         pre_hooks (List[Callable]): Functions to execute before the agent loop starts.
@@ -692,27 +695,6 @@ class BaseAgent:
         parts: List[str] = list(response_generator)
         return "".join(parts).strip()
 
-    def respond(
-        self,
-        user_input: str,
-        *,
-        addr: Optional[MemoryAddress] = None,
-        image_path: Optional[str] = None,
-        image_detail_override: Optional[str] = None,
-    ) -> Union[str, Generator[str, None, None]]:
-        """Deprecated alias for `run`."""
-        import warnings
-        warnings.warn(
-            "The `respond` method is deprecated and will be removed in a future version. Use `run` instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        return self.run(
-            user_input,
-            addr=addr,
-            image_path=image_path,
-            image_detail_override=image_detail_override,
-        )
 
     # Tool registry management
 

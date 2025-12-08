@@ -44,7 +44,7 @@ class HierarchicalTeam:
         self._register_hierarchy_tools(session_id, user_id)
 
         # 3. Run Root
-        return self.root.respond(user_input=user_input, addr=root_addr)
+        return self.root.run(user_input=user_input, addr=root_addr)
 
     def _register_hierarchy_tools(self, session_id: str, user_id: str) -> None:
         """Registers children as tools for their parents based on the current session."""

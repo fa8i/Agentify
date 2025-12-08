@@ -1,8 +1,9 @@
 # Agentify
 
-**Framework-agnostic AI agent library for building single and multi-agent systems**
+**Independent AI agent library based on the OpenAI SDK**
 
-Agentify is a Python library for building and orchestrating AI agents, from simple assistants to complex multi-agent systems. It focuses on a small set of composable primitives for LLM integration, memory, tools and coordination, so you can focus on product logic instead of framework details.
+Agentify is a Python library for building and orchestrating AI agents, from simple assistants to complex multi-agent systems. It targets the OpenAI-compatible Chat Completions interface, enabling support for multiple providers through a configurable `base_url` (OpenAI, Azure OpenAI, DeepSeek, Gemini, etc.). Agentify offers a streamlined, independent set of primitives for memory, tools, and coordination so you can focus on product logic without being tied to heavy frameworks.
+
 
 ## Why Agentify?
 
@@ -69,7 +70,7 @@ agent = BaseAgent(
 )
 
 # 3. Run a conversation
-response = agent.respond(user_input="Hello! How can you help me?")
+response = agent.run(user_input="Hello! How can you help me?")
 ```
 
 ## Composable Flows
