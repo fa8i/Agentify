@@ -1,10 +1,12 @@
+from __future__ import annotations
 from typing import List, Union, Generator, Any
+
 from agentify.core.agent import BaseAgent
 from agentify.memory.interfaces import MemoryAddress
 from agentify.multi_agent.team import Team
 
 # Type alias for what can be a step in the pipeline
-PipelineStep = Union[BaseAgent, Team, "SequentialPipeline", Any]
+PipelineStep = Union[BaseAgent, Team, SequentialPipeline, Any]
 
 
 class SequentialPipeline:
