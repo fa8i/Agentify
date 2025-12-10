@@ -23,22 +23,59 @@ logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
-    """AI Agent core class based on chat completions interface.
-    
-    This class provides a unified interface for interacting with various LLM providers
-    that are compatible with the OpenAI SDK format.
-    
+    """Core AI Agent class based on chat completions interface.
+
+    BaseAgent is the primary abstraction for building AI agents in Agentify. It provides
+    a unified interface for interacting with various LLM providers (OpenAI, Azure, DeepSeek,
+    Gemini, etc.) that implement the OpenAI SDK-compatible chat completions format.
+
+    The agent orchestrates the interaction between users, LLMs, and registered tools, managing
+    conversation history, tool execution, and model responses. It supports both synchronous
+    and asynchronous execution patterns, with automatic parallel tool execution in async mode.
+
     Attributes:
-        pre_hooks (List[Callable]): Functions to execute before the agent loop starts.
-            Supported arguments for injection:
-            - `agent`: The BaseAgent instance.
-            - `user_input`: The user's input string.
-            
-        post_hooks (List[Callable]): Functions to execute after the agent loop finishes.
-            Supported arguments for injection:
-            - `agent`: The BaseAgent instance.
-            - `user_input`: The user's input string.
-            - `response`: The final accumulated response string.
+        config (AgentConfig): Configuration object defining the agent's behavior, including
+            model selection, provider, temperature, retry policies, and streaming options.
+        memory (MemoryService): Service for managing conversation history. Abstracts the
+            underlying storage backend (InMemoryStore, RedisStore, etc.) and handles
+            memory policies like TTL and message limits.
+        memory_address (Optional[MemoryAddress]): Default conversation identifier (session_id,
+            user_id, agent_id). If provided during initialization, it can be omitted from
+            individual `run()` or `arun()` calls.
+        image_config (ImageConfig): Configuration for multimodal image processing, controlling
+            resolution, compression quality, and detail level for vision-capable models.
+        pre_hooks (List[Callable]): Functions executed before the agent loop starts. Hooks
+            receive arguments via dependency injection based on their signature. Available
+            arguments: `agent` (BaseAgent), `user_input` (str).
+        post_hooks (List[Callable]): Functions executed after the agent loop completes. Hooks
+            receive arguments via dependency injection. Available arguments: `agent` (BaseAgent),
+            `user_input` (str), `response` (str).
+        callbacks (List[AgentCallbackHandler]): Event handlers for observability. Receive
+            notifications for LLM calls, tool executions, errors, and reasoning steps.
+            Default: LoggingCallbackHandler if none provided.
+        client (LLMClientType): Synchronous LLM client (e.g., OpenAI, AzureOpenAI) initialized
+            during construction based on `config.provider`.
+
+    Notes:
+        Supports both synchronous (run) and asynchronous (arun) execution.
+        Use arun for non-blocking I/O and parallel tool execution.
+        
+        The async LLM client is created lazily on the first arun() call to avoid
+        unnecessary connections in sync-only usage.
+        
+        In async mode, when the LLM requests multiple independent tools in a single
+        turn, they are executed concurrently using asyncio.gather.
+        
+        Conversation history is isolated by MemoryAddress. Each unique combination
+        of (conversation_id, user_id, agent_id) maintains a separate history.
+        
+        Transient errors (timeouts, rate limits) are automatically retried with
+        exponential backoff. Only the final failure logs a full traceback.
+        
+        Tools must be Tool instances. Subclass Tool for custom implementations.
+        
+        For multimodal models, pass image_path to run() or arun(). The image is
+        automatically encoded to base64 and resized according to image_config.
     """
 
     def __init__(
