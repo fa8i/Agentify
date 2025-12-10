@@ -102,7 +102,28 @@ agent = BaseAgent(
 )
 
 response = agent.run("What time is it? Also calculate 15 * 23")
+response = agent.run("What time is it? Also calculate 15 * 23")
 print(response)
+```
+
+## Async Execution (Parallelism)
+
+For high-performance applications, use `arun()` instead of `run()`. This allows:
+1.  **Non-blocking execution:** Your server stays responsive while waiting for the LLM.
+2.  **Parallel Tool Calls:** If the agent needs multiple tools (e.g., getting weather for 3 cities), it executes them **simultaneously**, saving time.
+
+```python
+import asyncio
+
+async def main():
+    # ... setup agent as above ...
+    
+    # Use 'await agent.arun()'
+    response = await agent.arun("Get weather for Tokyo, London, and NY")
+    print(response)
+
+# Run the async loop
+asyncio.run(main())
 ```
 
 ## Next Steps
