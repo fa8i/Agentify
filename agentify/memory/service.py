@@ -72,6 +72,18 @@ class MemoryService:
             # Extract agent_id if available to show WHO is speaking
             agent_id = addr.agent_id if addr and addr.agent_id else "unknown"
             agent_tag = f"[{agent_id}]" if agent_id else ""
+            
+            # Log reasoning if present in metadata
+            if msg.metadata and "reasoning_content" in msg.metadata:
+                reasoning = msg.metadata["reasoning_content"]
+                if self.max_log_length is not None and len(reasoning) > self.max_log_length:
+                    reasoning_preview = reasoning[: self.max_log_length] + "..."
+                else:
+                    reasoning_preview = reasoning
+                
+                logger.info(
+                    f"{Colors.GRAY}{agent_tag}{Colors.RESET}{Colors.GRAY}[Reasoning]{Colors.RESET} {Colors.GRAY}{reasoning_preview}{Colors.RESET}"
+                )
 
             if self.max_log_length is None:
                 content_preview = msg.content
@@ -95,18 +107,6 @@ class MemoryService:
             logger.info(
                 f"{Colors.GRAY}{agent_tag}{Colors.RESET}{color}[{msg.role}]{Colors.RESET} {content_preview}{tool_info}"
             )
-
-            # Log reasoning if present in metadata
-            if msg.metadata and "reasoning_content" in msg.metadata:
-                reasoning = msg.metadata["reasoning_content"]
-                if self.max_log_length is not None and len(reasoning) > self.max_log_length:
-                    reasoning_preview = reasoning[: self.max_log_length] + "..."
-                else:
-                    reasoning_preview = reasoning
-                
-                logger.info(
-                    f"{Colors.GRAY}{agent_tag}{Colors.RESET}{Colors.GRAY}[Reasoning]{Colors.RESET} {Colors.GRAY}{reasoning_preview}{Colors.RESET}"
-                )
 
     def reset_history(
         self, addr: MemoryAddress, system_message: Dict[str, Any]
