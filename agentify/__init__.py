@@ -1,15 +1,10 @@
 # Core exports
-from agentify.core import (
-    BaseAgent,
-    Tool,
-    AgentConfig,
-    ImageConfig,
-    AgentCallbackHandler,
-    LoggingCallbackHandler,
-)
+from agentify.core.agent import BaseAgent
+from agentify.core.config import AgentConfig, ImageConfig
+from agentify.core.tool import Tool, tool
 
 # LLM exports
-from agentify.llm import LLMClientFactory
+from agentify.llm.client import LLMClientFactory
 
 # Memory exports
 from agentify.memory.service import MemoryService
@@ -20,13 +15,12 @@ __version__ = "0.2.0"
 
 __all__ = [
     "BaseAgent",
-    "Tool",
     "AgentConfig",
-    "ImageConfig",
-    "AgentCallbackHandler",
-    "LoggingCallbackHandler",
+    "Tool",
+    "tool",
     "LLMClientFactory",
     "MemoryService",
     "MemoryAddress",
     "MemoryPolicy",
+    "ImageConfig",
 ]
