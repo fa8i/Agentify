@@ -1,4 +1,4 @@
-from typing import Dict, List, Union, Generator
+from typing import Dict, List, Union, Generator, AsyncGenerator
 from agentify.core.agent import BaseAgent
 from agentify.memory.interfaces import MemoryAddress
 from agentify.multi_agent.tool_wrapper import AgentTool, FlowTool, Flow
@@ -46,6 +46,27 @@ class HierarchicalTeam:
         # 3. Run Root
         return self.root.run(user_input=user_input, addr=root_addr)
 
+    async def arun(
+        self,
+        user_input: str,
+        session_id: str = "default_session",
+        user_id: str = "default_user",
+    ) -> Union[str, AsyncGenerator[str, None]]:
+        """Async version of run(). Uses root agent's arun() for async execution."""
+
+        # 1. Setup Root Address
+        root_addr = MemoryAddress(
+            user_id=user_id,
+            conversation_id=session_id,
+            agent_id=self.root.config.name,
+        )
+
+        # 2. Register hierarchy tools for this session
+        self._register_hierarchy_tools(session_id, user_id)
+
+        # 3. Run Root asynchronously
+        return await self.root.arun(user_input=user_input, addr=root_addr)
+
     def _register_hierarchy_tools(self, session_id: str, user_id: str) -> None:
         """Registers children as tools for their parents based on the current session."""
 
@@ -79,3 +100,4 @@ class HierarchicalTeam:
 
                 # Register with parent
                 parent.register_tool(tool_wrapper)
+

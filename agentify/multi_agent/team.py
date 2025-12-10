@@ -1,4 +1,4 @@
-from typing import List, Optional, Union, Generator
+from typing import List, Optional, Union, Generator, AsyncGenerator
 from agentify.core.agent import BaseAgent
 from agentify.memory.interfaces import MemoryAddress
 from agentify.multi_agent.tool_wrapper import AgentTool
@@ -60,3 +60,29 @@ class Team:
 
         # 3. Run Supervisor
         return self.supervisor.run(user_input=user_input, addr=supervisor_addr)
+
+    async def arun(
+        self,
+        user_input: str,
+        session_id: str = "default_session",
+        user_id: str = "default_user",
+    ) -> Union[str, AsyncGenerator[str, None]]:
+        """Async version of run().
+        
+        Uses the supervisor's arun() for async execution with parallel tool calls.
+        """
+        # 1. Setup Supervisor Address
+        supervisor_addr = MemoryAddress(
+            user_id=user_id,
+            conversation_id=session_id,
+            agent_id=self.supervisor.config.name,
+        )
+
+        # 2. Register Workers as Tools
+        for worker in self.workers:
+            tool_wrapper = AgentTool(agent=worker, parent_addr=supervisor_addr)
+            self.supervisor.register_tool(tool_wrapper)
+
+        # 3. Run Supervisor asynchronously
+        return await self.supervisor.arun(user_input=user_input, addr=supervisor_addr)
+
