@@ -25,7 +25,7 @@ Agentify is a Python library for building and orchestrating AI agents, from simp
   "Chain of Thought" in conversation history, and log reasoning steps in real-time for visibility.
 
 - **Tools and actions**  
-  Type-annotated tool interface, straightforward registration of custom tools.
+  Simple `@tool` decorator for creating tools from functions with automatic JSON Schema generation, or type-annotated tool interface for custom implementations.
 
 - **Observability hooks**  
   Callback system for logging, monitoring and debugging agent behaviour across complex flows.
@@ -51,14 +51,21 @@ pip install agentify-core[all]  # Installs all optional dependencies
 ## Quick Start
 
 ```python
-from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress
+from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress, tool
 from agentify.memory.stores import InMemoryStore
 
-# 1. Create memory service
+# 1. Create a simple tool with @tool decorator
+@tool
+def get_time() -> dict:
+    """Returns the current time."""
+    from datetime import datetime
+    return {"time": datetime.now().strftime("%H:%M:%S")}
+
+# 2. Create memory service
 memory = MemoryService(store=InMemoryStore(), log_enabled=True, max_log_length=100)
 addr = MemoryAddress(conversation_id="session_1")
 
-# 2. Create an Agent
+# 3. Create an Agent with the tool
 agent = BaseAgent(
     config=AgentConfig(
         name="ReasoningAgent",
@@ -69,11 +76,12 @@ agent = BaseAgent(
         model_kwargs={"max_completion_tokens": 5000} # Pass model-specific params
     ),
     memory=memory,
-    memory_address=addr
+    memory_address=addr,
+    tools=[get_time]  # Add your tools here
 )
 
-# 3. Run a conversation
-response = agent.run(user_input="Hello! How can you help me?")
+# 4. Run a conversation
+response = agent.run(user_input="What time is it?")
 ```
 
 ## Composable Flows

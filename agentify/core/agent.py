@@ -72,7 +72,8 @@ class BaseAgent:
         Transient errors (timeouts, rate limits) are automatically retried with
         exponential backoff. Only the final failure logs a full traceback.
         
-        Tools must be Tool instances. Subclass Tool for custom implementations.
+        Tools can be created by subclassing Tool or using the @tool decorator for
+        automatic schema generation from function signatures.
         
         For multimodal models, pass image_path to run() or arun(). The image is
         automatically encoded to base64 and resized according to image_config.

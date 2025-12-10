@@ -142,12 +142,65 @@ agent = BaseAgent(
 )
 ```
 
-### Custom Tools
+### Creating Custom Tools
 
-Create your own tools:
+Agentify offers two ways to create tools: the `@tool` decorator (recommended) or subclassing `Tool`.
+
+#### Using the `@tool` Decorator (Recommended)
+
+The `@tool` decorator expects **Google Style** docstring and automatically generates the JSON Schema from your function signature:
+
 
 ```python
-from agentify.core.tool import Tool
+from agentify import tool
+
+@tool
+def get_current_time() -> dict:
+    """Returns the current date and time in ISO 8601 format."""
+    import datetime
+    return {"current_time": datetime.datetime.now().isoformat()}
+```
+
+**With Parameters:**
+
+```python
+@tool
+def calculate(expression: str) -> dict:
+    """Evaluates a mathematical expression.
+    
+    Args:
+        expression: The math expression to evaluate (e.g., '2 + 2').
+    """
+    import ast
+    # ... calculation logic ...
+    return {"result": result}
+```
+
+**Note:** The `Returns:` section is purely for documentation and does NOT affect the generated JSON Schema.
+
+**Using Decorator Tools:**
+
+```python
+from agentify import BaseAgent, AgentConfig, tool
+
+@tool
+def my_tool(param: str) -> dict:
+    """My custom tool."""
+    return {"result": param}
+
+agent = BaseAgent(
+    config=config,
+    memory=memory,
+    tools=[my_tool]  # Use directly, no need to instantiate
+)
+```
+
+#### Subclassing Tool (Advanced)
+
+For complex tools with state or initialization logic:
+
+```python
+from agentify import Tool
 
 class CustomTool(Tool):
     def __init__(self):
@@ -175,7 +228,7 @@ class CustomTool(Tool):
 agent = BaseAgent(
     config=config,
     memory=memory,
-    tools=[CustomTool()]
+    tools=[CustomTool()]  # Instantiate for class-based tools
 )
 ```
 
@@ -237,7 +290,7 @@ config = AgentConfig(
 ```python
 config = AgentConfig(
     provider="azure",
-    model_name="gpt-4o",
+    model_name="model",
     client_config_override={
         "api_version": "2024-02-15-preview"
     }
