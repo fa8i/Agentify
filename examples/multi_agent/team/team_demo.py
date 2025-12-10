@@ -4,13 +4,35 @@ from dotenv import load_dotenv
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-from agentify.core import BaseAgent, AgentConfig
+from agentify import BaseAgent, AgentConfig, tool
 from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.multi_agent import Team
-from agentify.extensions.tools import TimeTool, CalculatorTool
+import datetime
 
 load_dotenv()
+
+
+# Define custom tools with decorator
+@tool
+def get_current_time() -> dict:
+    """Returns the current date and time."""
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return {"current_time": now}
+
+
+@tool
+def calculate(expression: str) -> dict:
+    """Calculates a mathematical expression.
+    
+    Args:
+        expression: The math expression to evaluate (e.g., '25 * 4').
+    """
+    try:
+        result = eval(expression)
+        return {"result": result}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def create_demo_team():
@@ -22,13 +44,13 @@ def create_demo_team():
         name="Researcher",
         system_prompt="You are a researcher. You can calculate things and check time. Be concise.",
         provider="openai",
-        model_name="gpt-4o-mini",
+        model_name="gpt-4.1",
         temperature=0.0,
     )
     researcher = BaseAgent(
         config=researcher_config,
         memory=memory_service,
-        tools=[TimeTool(), CalculatorTool()],
+        tools=[get_current_time, calculate],  # Using decorator tools
     )
 
     # 2. Create Supervisor: Manager (no tools initially, will get Researcher as tool)
@@ -36,7 +58,7 @@ def create_demo_team():
         name="Manager",
         system_prompt="You are a manager. You delegate tasks to your researcher. Summarize their findings for the user.",
         provider="openai",
-        model_name="gpt-4o-mini",
+        model_name="gpt-4.1",
         temperature=0.7,
     )
     manager = BaseAgent(
