@@ -102,7 +102,6 @@ agent = BaseAgent(
 )
 
 response = agent.run("What time is it? Also calculate 15 * 23")
-response = agent.run("What time is it? Also calculate 15 * 23")
 print(response)
 ```
 
