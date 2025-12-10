@@ -1,5 +1,4 @@
 from __future__ import annotations
-import asyncio
 import json
 import logging
 import time
@@ -7,13 +6,13 @@ import uuid
 import base64
 from io import BytesIO
 import inspect
-from typing import Any, Dict, Generator, List, Optional, Union, Iterator, Callable, AsyncGenerator
+from typing import Any, Dict, Generator, List, Optional, Union, Iterator, Callable
 
 from PIL import Image
 from openai import RateLimitError
 
 from agentify.core.tool import Tool
-from agentify.llm.client import LLMClientFactory, LLMClientType, AsyncLLMClientType
+from agentify.llm.client import LLMClientFactory, LLMClientType
 from agentify.memory.service import MemoryService
 from agentify.memory.interfaces import MemoryAddress
 from agentify.core.config import AgentConfig, ImageConfig
@@ -67,14 +66,12 @@ class BaseAgent:
 
         self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
 
-        self._factory = client_factory or LLMClientFactory()
-        self.client: LLMClientType = self._factory.create_client(
+        factory = client_factory or LLMClientFactory()
+        self.client: LLMClientType = factory.create_client(
             provider=self.config.provider,
             config_override=self.config.client_config_override,
             timeout=self.config.timeout,
         )
-        # Async client is created lazily on first arun() call
-        self._async_client: Optional[AsyncLLMClientType] = None
 
     @property
     def tool_defs(self) -> List[Dict[str, Any]]:
@@ -302,19 +299,13 @@ class BaseAgent:
                     time.sleep(sleep_time)
                     continue
 
-                # For other transient errors (timeouts, connection issues), log warning instead of full error trace
-                if attempt < self.config.max_retries - 1:
-                    logger.warning(
-                        f"Transient error in _get_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}. Retrying..."
-                    )
-                    time.sleep(2**attempt)
-                else:
-                    # Final attempt failed, log full error
-                    logger.error(
-                        f"Error in _get_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}",
-                        exc_info=True,
-                    )
+                logger.error(
+                    f"Error in _get_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}",
+                    exc_info=True,
+                )
+                if attempt == self.config.max_retries - 1:
                     raise
+                time.sleep(2**attempt)
 
         msg = f"LLM completions ({self.client.__class__.__name__}) failed after {self.config.max_retries} retries."
         logger.critical(msg)
@@ -709,364 +700,8 @@ class BaseAgent:
         parts: List[str] = list(response_generator)
         return "".join(parts).strip()
 
-    # -------------------------------------------------------------------------
-    # Async methods
-    # -------------------------------------------------------------------------
-
-    def _get_async_client(self) -> AsyncLLMClientType:
-        """Lazily create and return the async client."""
-        if self._async_client is None:
-            self._async_client = self._factory.create_async_client(
-                provider=self.config.provider,
-                config_override=self.config.client_config_override,
-                timeout=self.config.timeout,
-            )
-        return self._async_client
-
-    async def _aget_llm_response(
-        self, *, addr: MemoryAddress
-    ) -> Union[Any, AsyncGenerator[Dict[str, Any], None]]:
-        """Perform the async LLM call with retries and error handling."""
-        async_client = self._get_async_client()
-        tool_choice_param = "auto" if self._tools else None
-        common_params: Dict[str, Any] = {
-            "model": self.config.model_name,
-            "messages": self.memory.get_history(addr),
-            "temperature": self.config.temperature,
-        }
-
-        if self.config.reasoning_effort:
-            common_params["reasoning_effort"] = self.config.reasoning_effort
-
-        if self.config.model_kwargs:
-            for k, v in self.config.model_kwargs.items():
-                if k not in common_params:
-                    common_params[k] = v
-
-        # Only add tools if they exist
-        tools_payload = self.tool_defs
-        if tools_payload:
-            common_params["tools"] = tools_payload
-            common_params["tool_choice"] = tool_choice_param
-
-        for cb in self.callbacks:
-            cb.on_llm_start(self.config.model_name, common_params["messages"])
-
-        for attempt in range(self.config.max_retries):
-            try:
-                if self.config.stream:
-                    return await async_client.chat.completions.create(
-                        **common_params, stream=True
-                    )
-                response = await async_client.chat.completions.create(
-                    **common_params, stream=False
-                )
-
-                for cb in self.callbacks:
-                    cb.on_llm_end(response)
-
-                if response.choices and len(response.choices) > 0:
-                    return response.choices[0].message
-                raise ValueError("API response did not contain valid 'choices'.")
-            except Exception as e:
-                # Unify error handling
-                for cb in self.callbacks:
-                    cb.on_error(e, f"_aget_llm_response attempt {attempt + 1}")
-
-                if isinstance(e, RateLimitError):
-                    if attempt == self.config.max_retries - 1:
-                        logger.error("API Rate Limit reached after retries.")
-                        raise
-                    sleep_time = 2**attempt
-                    logger.warning(f"Rate limit reached. Retrying in {sleep_time}s...")
-                    await asyncio.sleep(sleep_time)
-                    continue
-
-                # For other transient errors (timeouts, connection issues), log warning instead of full error trace
-                if attempt < self.config.max_retries - 1:
-                    logger.warning(
-                        f"Transient error in _aget_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}. Retrying..."
-                    )
-                    await asyncio.sleep(2**attempt)
-                else:
-                    # Final attempt failed, log full error
-                    logger.error(
-                        f"Error in _aget_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}",
-                        exc_info=True,
-                    )
-                    raise
-
-        msg = f"LLM completions ({async_client.__class__.__name__}) failed after {self.config.max_retries} retries."
-        logger.critical(msg)
-        raise RuntimeError(msg)
-
-    async def _aexecute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Execute a single tool asynchronously and return its output as a string."""
-        tool = self._tools.get(tool_name)
-
-        for cb in self.callbacks:
-            cb.on_tool_start(tool_name, arguments)
-
-        if not tool:
-            err_msg = json.dumps({"error": f"Tool '{tool_name}' is not registered."})
-            for cb in self.callbacks:
-                cb.on_tool_finish(tool_name, err_msg)
-            return err_msg
-
-        try:
-            # Check for async_func attribute (used by AgentTool, FlowTool, SpawnAgentTool)
-            if hasattr(tool, "async_func") and asyncio.iscoroutinefunction(tool.async_func):
-                result = await tool.async_func(**arguments)
-            # Check if the tool function itself is async
-            elif asyncio.iscoroutinefunction(tool.func):
-                result = await tool.func(**arguments)
-            else:
-                # Run sync function in thread pool to avoid blocking
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: tool(**arguments)
-                )
-            result_str = str(result)
-            for cb in self.callbacks:
-                cb.on_tool_finish(tool_name, result_str)
-            return result_str
-        except Exception as e:
-            for cb in self.callbacks:
-                cb.on_error(e, f"Tool execution: {tool_name}")
-            logger.error(
-                f"Unexpected error executing tool '{tool_name}': {e}", exc_info=True
-            )
-            return json.dumps(
-                {"error": f"Unexpected error executing tool '{tool_name}': {e}"}
-            )
-
-    async def _aprocess_stream_response(
-        self, response_stream: Any
-    ) -> AsyncGenerator[str, None]:
-        """
-        Process async streaming response, yielding content chunks.
-        Returns tool calls via StopAsyncIteration or a final return.
-        """
-        tool_call_assembler: Dict[int, Dict[str, Any]] = {}
-        full_content = []
-        full_reasoning = []
-
-        async for chunk in response_stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-
-            if delta.content:
-                for cb in self.callbacks:
-                    cb.on_llm_new_token(delta.content)
-                full_content.append(delta.content)
-                yield delta.content
-
-            # Handle reasoning content if present
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                for cb in self.callbacks:
-                    cb.on_reasoning_step(delta.reasoning_content)
-                full_reasoning.append(delta.reasoning_content)
-
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in tool_call_assembler:
-                        tool_call_assembler[idx] = {
-                            "id": None,
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""},
-                        }
-                    call_data = tool_call_assembler[idx]
-                    if tc_delta.id and not call_data["id"]:
-                        call_data["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            call_data["function"]["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            call_data["function"]["arguments"] += (
-                                tc_delta.function.arguments
-                            )
-
-        # Call on_llm_end with the full accumulated content
-        full_response_text = "".join(full_content)
-        for cb in self.callbacks:
-            cb.on_llm_end(full_response_text)
-
-        # Store results in instance for retrieval after iteration
-        self._last_stream_tool_calls = []
-        for idx in sorted(tool_call_assembler.keys()):
-            call_data = tool_call_assembler[idx]
-            if not call_data.get("id"):
-                call_data["id"] = (
-                    f"s_{self.config.provider[:3]}_tc_{idx}_{uuid.uuid4().hex[:6]}"
-                )
-            if call_data.get("function", {}).get("name"):
-                self._last_stream_tool_calls.append(call_data)
-        
-        self._last_stream_reasoning = "".join(full_reasoning)
-
-    async def _aexecute_agent_loop(
-        self,
-        user_input: str,
-        *,
-        addr: MemoryAddress,
-        image_path: Optional[str] = None,
-        image_detail_override: Optional[str] = None,
-    ) -> AsyncGenerator[str, None]:
-        """Async version of the agent loop with parallel tool execution."""
-        self._ensure_system_initialized(addr)
-
-        for cb in self.callbacks:
-            cb.on_agent_start(self.config.name, user_input)
-
-        for hook in self.pre_hooks:
-            self._execute_hook(hook, agent=self, user_input=user_input)
-
-        user_content = self._build_user_content(
-            user_input,
-            image_path=image_path,
-            image_detail_override=image_detail_override,
-        )
-        if user_content is not None:
-            self.add(role="user", content=user_content, addr=addr)
-
-        accumulated_response: List[str] = []
-
-        iteration_count = 0
-        while True:
-            if self.config.max_tool_iter is not None and iteration_count >= self.config.max_tool_iter:
-                break
-            iteration_count += 1
-
-            response_or_stream = await self._aget_llm_response(addr=addr)
-
-            current_turn_content_parts: List[str] = []
-            assembled_tool_calls: List[Dict[str, Any]] = []
-            full_reasoning_content: Optional[str] = None
-
-            if self.config.stream:
-                # Process async stream
-                async for content_chunk in self._aprocess_stream_response(response_or_stream):
-                    yield content_chunk
-                    current_turn_content_parts.append(content_chunk)
-                    accumulated_response.append(content_chunk)
-                # Retrieve tool calls from stream processing
-                assembled_tool_calls = getattr(self, "_last_stream_tool_calls", [])
-                full_reasoning_content = getattr(self, "_last_stream_reasoning", None)
-            else:
-                content, assembled_tool_calls, full_reasoning_content = self._process_sync_response(
-                    response_or_stream
-                )
-                if content:
-                    yield content
-                    current_turn_content_parts.append(content)
-                    accumulated_response.append(content)
-
-            # Expand tool calls (fix for some models)
-            assembled_tool_calls = self._expand_tool_calls(assembled_tool_calls)
-            full_turn_content = "".join(current_turn_content_parts)
-
-            # If no tool calls, we are done
-            if not assembled_tool_calls:
-                msg_kwargs = {}
-                if full_reasoning_content:
-                    msg_kwargs["metadata"] = {"reasoning_content": full_reasoning_content}
-                
-                self.add(role="assistant", content=full_turn_content, addr=addr, **msg_kwargs)
-                for cb in self.callbacks:
-                    cb.on_agent_finish(self.config.name, full_turn_content)
-                break
-
-            # Record assistant message with tool calls
-            assistant_msg: Dict[str, Any] = {"role": "assistant"}
-            if full_turn_content:
-                assistant_msg["content"] = full_turn_content
-            assistant_msg["tool_calls"] = assembled_tool_calls
-            if full_reasoning_content:
-                assistant_msg["metadata"] = {"reasoning_content": full_reasoning_content}
-            
-            self.add(addr=addr, **assistant_msg)
-
-            # Execute tools IN PARALLEL using asyncio.gather
-            async def execute_single_tool(tc: Dict[str, Any]) -> tuple[str, str, str]:
-                tool_name = tc["function"]["name"]
-                tool_call_id = tc["id"]
-                args_str = tc["function"]["arguments"]
-                try:
-                    args = self._parse_tool_arguments(tool_name, args_str)
-                    result_content = await self._aexecute_tool(tool_name, args)
-                except ValueError as e:
-                    result_content = json.dumps({"error": str(e)})
-                return tool_call_id, tool_name, result_content
-
-            tool_results = await asyncio.gather(
-                *[execute_single_tool(tc) for tc in assembled_tool_calls]
-            )
-
-            # Add tool results to memory
-            for tool_call_id, tool_name, result_content in tool_results:
-                self.add(
-                    role="tool",
-                    content=result_content,
-                    tool_call_id=tool_call_id,
-                    name=tool_name,
-                    addr=addr,
-                )
-        else:
-            warn_msg = f"\n[WARNING] Agent '{self.config.name}' reached max iterations ({self.config.max_tool_iter}).\n"
-            logger.warning(warn_msg.strip())
-            for cb in self.callbacks:
-                cb.on_agent_finish(self.config.name, warn_msg)
-            yield warn_msg
-            accumulated_response.append(warn_msg)
-
-        full_response = "".join(accumulated_response)
-        for hook in self.post_hooks:
-            self._execute_hook(
-                hook, agent=self, user_input=user_input, response=full_response
-            )
-
-    async def arun(
-        self,
-        user_input: str,
-        *,
-        addr: Optional[MemoryAddress] = None,
-        image_path: Optional[str] = None,
-        image_detail_override: Optional[str] = None,
-    ) -> Union[str, AsyncGenerator[str, None]]:
-        """Async entrypoint to interact with the agent.
-        
-        This is the async version of `run()`. It executes LLM calls
-        and tool executions asynchronously, with parallel tool execution
-        when multiple tools are called.
-        
-        Args:
-            user_input: The text input from the user.
-            addr: The memory address for the conversation.
-            image_path: Optional path to an image file.
-            image_detail_override: Optional detail level for image processing.
-            
-        Returns:
-            The agent's response as a string or an async generator if streaming is enabled.
-        """
-        a = self._addr_or_raise(addr)
-        response_generator = self._aexecute_agent_loop(
-            user_input,
-            addr=a,
-            image_path=image_path,
-            image_detail_override=image_detail_override,
-        )
-
-        if self.config.stream:
-            return response_generator
-
-        parts: List[str] = []
-        async for chunk in response_generator:
-            parts.append(chunk)
-        return "".join(parts).strip()
 
     # Tool registry management
-
 
     def tool_exists(self, name: str) -> bool:
         """Check whether a tool is registered."""

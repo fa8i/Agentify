@@ -33,9 +33,6 @@ Agentify is a Python library for building and orchestrating AI agents, from simp
 - **I/O capabilities**  
   Streaming support for real-time responses and vision/image models for multimodal interactions.
 
-- **Async & Parallel Execution**  
-  Built-in `async/await` support (`arun()`) for all agents and flows. Automatically executes independent tool calls in parallel (e.g., fetching data from 3 APIs simultaneously), significantly reducing latency.
-
 
 ## Installation
 
