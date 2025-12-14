@@ -10,7 +10,7 @@ readme = "README_PYPI.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Fabian M", email = "fabian@example.com"}
+    {name = "Fabian M", email = "fabianmp_98@hotmail.com"}
 ]
 keywords = ["agent", "multi-agent", "ai", "llm", "openai", "framework"]
 classifiers = [
@@ -19,7 +19,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

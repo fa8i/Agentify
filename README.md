@@ -1,5 +1,10 @@
 # Agentify
 
+[![PyPI version](https://img.shields.io/pypi/v/agentify-core?color=orange)](https://pypi.org/project/agentify-core/)
+[![Downloads](https://img.shields.io/pepy/dt/agentify-core)](https://pepy.tech/project/agentify-core)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/agentify-core)](https://pypi.org/project/agentify-core/)
+
 **Independent AI agent library based on the OpenAI SDK**
 
 Agentify is a Python library for building AI agents and multi-agent systems. Built on the OpenAI-compatible Chat Completions interface, it supports multiple providers (OpenAI, Azure, DeepSeek, Gemini, Claude) with clear abstractions for memory, tools, and orchestration—no heavy framework lock-in.
