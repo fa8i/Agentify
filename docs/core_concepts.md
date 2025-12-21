@@ -102,6 +102,17 @@ store = RedisStore(url="redis://localhost:6379/0")
 store.delete_conversation(addr)
 ```
 
+**SQLiteStore** - For zero-dependency persistence:
+```python
+from agentify.memory.stores import SQLiteStore
+
+# Persistent (single file)
+store = SQLiteStore(db_path="agentify.db")
+
+# In-memory (transient) by default
+store = SQLiteStore(db_path=":memory:")
+```
+
 **ElasticsearchStore** - For advanced search and durability:
 ```python
 from agentify.memory.stores import ElasticsearchStore
