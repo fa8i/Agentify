@@ -1,7 +1,8 @@
 """Unit tests for MCP integration."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from agentify.mcp.adapter import convert_mcp_tools_to_agentify
+from agentify.mcp.client import MCPConnection, _Transport
 
 
 class MockMCPTool:
@@ -20,6 +21,8 @@ class MockCallToolResult:
         item.text = text_output
         self.content = [item]
 
+
+# --- Adapter Tests ---
 
 @pytest.mark.asyncio
 async def test_schema_conversion():
@@ -87,3 +90,35 @@ async def test_empty_description_handling():
     agentify_tools = await convert_mcp_tools_to_agentify(mock_session, mock_tools)
 
     assert agentify_tools[0].schema["description"] == ""
+
+
+# --- Factory Pattern Tests ---
+
+def test_stdio_factory_creates_correct_transport():
+    """MCPConnection.stdio() sets transport to STDIO."""
+    conn = MCPConnection.stdio(command="python", args=["server.py"])
+    assert conn._transport == _Transport.STDIO
+    assert conn._stdio_params is not None
+    assert conn._stdio_params.command == "python"
+
+
+def test_sse_factory_creates_correct_transport():
+    """MCPConnection.sse() sets transport to SSE."""
+    conn = MCPConnection.sse(url="http://localhost:8080/sse", headers={"Auth": "Bearer token"})
+    assert conn._transport == _Transport.SSE
+    assert conn._sse_url == "http://localhost:8080/sse"
+    assert conn._sse_headers == {"Auth": "Bearer token"}
+
+
+def test_sse_factory_default_timeouts():
+    """MCPConnection.sse() uses default timeouts."""
+    conn = MCPConnection.sse(url="http://example.com")
+    assert conn._sse_timeout == 5.0
+    assert conn._sse_read_timeout == 300.0
+
+
+def test_sse_factory_custom_timeouts():
+    """MCPConnection.sse() accepts custom timeouts."""
+    conn = MCPConnection.sse(url="http://example.com", timeout=10.0, sse_read_timeout=60.0)
+    assert conn._sse_timeout == 10.0
+    assert conn._sse_read_timeout == 60.0
