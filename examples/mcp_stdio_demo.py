@@ -16,10 +16,10 @@ from agentify.memory.interfaces import MemoryAddress
 
 
 async def main():
-    # Use the official "mcp-server-fetch" for fetching web content (no API key needed)
-    print("Connecting to 'mcp-server-fetch'...")
+    # Use the official "mcp-server-fetch" via StdIO transport
+    print("Connecting to 'mcp-server-fetch' (StdIO)...")
 
-    async with MCPConnection(command="uvx", args=["mcp-server-fetch"]) as mcp:
+    async with MCPConnection.stdio(command="uvx", args=["mcp-server-fetch"]) as mcp:
         tools = await mcp.get_tools()
         print(f"Loaded tools: {[t.name for t in tools]}")
 
