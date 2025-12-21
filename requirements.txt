@@ -1,19 +1,26 @@
-# Core dependencies (required)
+# --- Core Dependencies ---
 openai
 python-dotenv
 Pillow
 
-# Optional dependencies (install with pip install agentify[extra])
-# For Redis storage: pip install agentify[redis]
-# redis>=4.0.0
+# --- Optional Extensions ---
+# Redis Storage
+redis>=4.0.0
 
-# For extension tools (weather, etc): pip install agentify[tools]
-# requests>=2.25.0
+# Elasticsearch Storage
+elasticsearch>=8.0.0
 
-# For UI/demos: pip install agentify[ui]
+# Model Context Protocol
+mcp
+
+# --- UI & Demos ---
 gradio==5.49.1
 
-# Install all optional dependencies: pip install agentify[all]
-
-# Development dependencies: pip install agentify[dev]
-mcp
+# --- Development & Testing ---
+pytest
+pytest-cov
+black
+flake8
+mypy
+twine
+build
