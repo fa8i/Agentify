@@ -69,7 +69,7 @@ class MemoryService:
 
             color = role_colors.get(msg.role, Colors.RESET)
             
-            # Extract agent_id if available to show WHO is speaking
+            # Extract agent_id if available to show who is speaking
             agent_id = addr.agent_id if addr and addr.agent_id else "unknown"
             agent_tag = f"[{agent_id}]" if agent_id else ""
             

@@ -17,8 +17,7 @@ class MemoryAddress:
     user_id: Optional[str] = None
     conversation_id: Optional[str] = None
     agent_id: Optional[str] = None
-    # extras lets you pass stable routing dimensions if needed.
-    extras: Tuple[Tuple[str, str], ...] = ()
+    extras: Tuple[Tuple[str, str], ...] = ()  # extras lets pass stable routing dimensions if needed.
 
     def as_tuple(self) -> Tuple:
         """Stable, hashable representation for keys and indexing."""
