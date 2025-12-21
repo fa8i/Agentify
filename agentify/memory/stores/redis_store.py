@@ -49,3 +49,48 @@ class RedisStore(ConversationStore):
 
     def set_ttl(self, addr: MemoryAddress, seconds: int) -> None:
         self.r.expire(self._hkey(addr), seconds)
+
+    def list_conversations(self, limit: int = 100, offset: int = 0) -> List[MemoryAddress]:
+        """Scan keys to list active dialogues."""
+        keys = []
+        pattern = f"{self.prefix}:*:history"
+        
+        for key in self.r.scan_iter(match=pattern, count=100):
+            keys.append(key)
+        
+        keys.sort() # sort for stability
+        
+        # Paginate
+        slice_keys = keys[offset : offset + limit]
+        
+        results = []
+        for k in slice_keys:
+            if not k.endswith(":history"):
+                continue
+            core = k[:-8]
+            
+            if core.startswith(f"{self.prefix}:"):
+                core = core[len(self.prefix)+1:]
+            
+            parts = core.split(":")
+            kwargs = {}
+            extras = []
+            
+            for part in parts:
+                if "=" not in part:
+                    continue
+                key, val = part.split("=", 1)
+                if key == "v": kwargs["api_version"] = val
+                elif key == "t": kwargs["tenant_id"] = val
+                elif key == "u": kwargs["user_id"] = val
+                elif key == "c": kwargs["conversation_id"] = val
+                elif key == "a": kwargs["agent_id"] = val
+                else:
+                    extras.append((key, val))
+            
+            if extras:
+                kwargs["extras"] = tuple(extras)
+                
+            results.append(MemoryAddress(**kwargs))
+            
+        return results

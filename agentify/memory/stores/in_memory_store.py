@@ -27,3 +27,9 @@ class InMemoryStore(ConversationStore):
 
     def set_ttl(self, addr: MemoryAddress, seconds: int) -> None:
         self._ttl[addr] = seconds  # not enforced in-memory
+
+    def list_conversations(self, limit: int = 100, offset: int = 0) -> List[MemoryAddress]:
+        keys = list(self._history.keys())
+        # Sort for stability
+        keys.sort(key=lambda k: k.key_str())
+        return keys[offset : offset + limit]
