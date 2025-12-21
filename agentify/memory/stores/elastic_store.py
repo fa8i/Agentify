@@ -64,14 +64,13 @@ class ElasticsearchStore(ConversationStore):
                     
                     # Message fields
                     "role": {"type": "keyword"},
-                    "content": {"type": "text"},  # Full-text searchable!
+                    "content": {"type": "text"},  # Full-text searchable
                     "name": {"type": "keyword"},
                     "id": {"type": "keyword"},
                     "ts": {"type": "date", "format": "epoch_second"},
                     
-                    # Structured Objects (stored as objects, flexible)
+                    # Structured Objects 
                     "metadata": {"type": "object", "enabled": True}, 
-                    # We store full address string for quick debugging/filtering
                     "address_key": {"type": "keyword"}
                 }
             }
@@ -95,8 +94,7 @@ class ElasticsearchStore(ConversationStore):
             "agent_id": addr.agent_id,
             "address_key": addr.key_str(),
         })
-        # Handle Extras if present (as a list of strings for keyword matching?)
-        # For now, we rely on the primary dimensions.
+
         return base
 
     def _build_filter_query(self, addr: MemoryAddress) -> List[Dict[str, Any]]:

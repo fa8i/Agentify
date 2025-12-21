@@ -58,7 +58,7 @@ class RedisStore(ConversationStore):
         for key in self.r.scan_iter(match=pattern, count=100):
             keys.append(key)
         
-        keys.sort() # sort for stability
+        keys.sort()
         
         # Paginate
         slice_keys = keys[offset : offset + limit]
