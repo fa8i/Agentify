@@ -13,7 +13,7 @@ Agentify is a Python library for building AI agents and multi-agent systems. Bui
 ## Key Features
 
 - **Multi-agent orchestration**: Teams, pipelines, hierarchies, and dynamic sub-agent spawning
-- **Memory service**: Pluggable backends (in-memory, Redis) with policies (TTL, limits, token budgets)
+- **Memory service**: Pluggable backends (in-memory, Redis, Elasticsearch) with policies (TTL, limits, token budgets)
 - **Tools**: `@tool` decorator for auto-schema generation, or custom tool classes. Built-in file I/O, planning, weather, and more
 - **MCP Integration**: Easy connection to MCP servers via StdIO (local) or SSE/HTTP (remote) to use external tools
 - **Reasoning models**: Configure thinking depth, store chain-of-thought, real-time reasoning logs
