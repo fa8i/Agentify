@@ -11,7 +11,7 @@ from agentify.memory.service import MemoryService
 from agentify.memory.interfaces import MemoryAddress
 from agentify.memory.policies import MemoryPolicy
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "BaseAgent",
