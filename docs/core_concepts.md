@@ -236,41 +236,33 @@ agent = BaseAgent(
 
 Agentify supports **MCP** (Model Context Protocol), an open standard for connecting AI agents to external tools and data sources.
 
-#### How it Works
+#### Transports
 
-MCP uses a client-server architecture. Agentify acts as the **client**, connecting to any **MCP server** (local or remote) via `stdio` transport. The server exposes tools that Agentify automatically converts to its native `Tool` format.
+| Transport | Use Case | Factory Method | Arguments |
+|-----------|----------|----------------|-----------|
+| **StdIO** | Local servers (scripts, CLIs) | `MCPConnection.stdio(...)` | `command`, `args`, `env` |
+| **SSE** | Remote HTTP servers | `MCPConnection.sse(...)` | `url`, `headers`, `timeout`, `sse_read_timeout` |
 
-#### Usage
-
-Use `MCPConnection` as an async context manager to ensure proper resource cleanup:
+#### StdIO Example (Local Servers)
 
 ```python
-import asyncio
-from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress
-from agentify.memory.stores import InMemoryStore
 from agentify.mcp import MCPConnection
 
-async def main():
-    # Connect to an MCP server (e.g., the official 'fetch' server)
-    async with MCPConnection(command="uvx", args=["mcp-server-fetch"]) as mcp:
-        mcp_tools = await mcp.get_tools()
+async with MCPConnection.stdio(command="uvx", args=["mcp-server-fetch"]) as mcp:
+    tools = await mcp.get_tools()
+    agent = BaseAgent(config=config, memory=memory, tools=tools, ...)
+    await agent.arun("Fetch https://example.com")
+```
 
-        agent = BaseAgent(
-            config=AgentConfig(
-                name="MCPAgent",
-                system_prompt="You are an assistant.",
-                provider="provider",
-                model_name="model_name"
-            ),
-            memory=MemoryService(store=InMemoryStore()),
-            memory_address=MemoryAddress(agent_id="MCPAgent"),
-            tools=mcp_tools
-        )
+#### SSE Example (Remote Servers)
 
-        response = await agent.arun("Fetch content from https://example.com")
-        print(response)
+```python
+from agentify.mcp import MCPConnection
 
-asyncio.run(main())
+async with MCPConnection.sse(url="http://localhost:8080/sse", headers={"Authorization": "Bearer token"}) as mcp:
+    tools = await mcp.get_tools()
+    agent = BaseAgent(config=config, memory=memory, tools=tools, ...)
+    await agent.arun("Use the remote tools")
 ```
 
 > **Note:** The `mcp` package must be installed: `pip install mcp`
