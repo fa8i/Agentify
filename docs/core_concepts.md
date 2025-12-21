@@ -232,6 +232,49 @@ agent = BaseAgent(
 )
 ```
 
+### MCP Tools (Model Context Protocol)
+
+Agentify supports **MCP** (Model Context Protocol), an open standard for connecting AI agents to external tools and data sources.
+
+#### How it Works
+
+MCP uses a client-server architecture. Agentify acts as the **client**, connecting to any **MCP server** (local or remote) via `stdio` transport. The server exposes tools that Agentify automatically converts to its native `Tool` format.
+
+#### Usage
+
+Use `MCPConnection` as an async context manager to ensure proper resource cleanup:
+
+```python
+import asyncio
+from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress
+from agentify.memory.stores import InMemoryStore
+from agentify.mcp import MCPConnection
+
+async def main():
+    # Connect to an MCP server (e.g., the official 'fetch' server)
+    async with MCPConnection(command="uvx", args=["mcp-server-fetch"]) as mcp:
+        mcp_tools = await mcp.get_tools()
+
+        agent = BaseAgent(
+            config=AgentConfig(
+                name="MCPAgent",
+                system_prompt="You are an assistant.",
+                provider="provider",
+                model_name="model_name"
+            ),
+            memory=MemoryService(store=InMemoryStore()),
+            memory_address=MemoryAddress(agent_id="MCPAgent"),
+            tools=mcp_tools
+        )
+
+        response = await agent.arun("Fetch content from https://example.com")
+        print(response)
+
+asyncio.run(main())
+```
+
+> **Note:** The `mcp` package must be installed: `pip install mcp`
+
 ## Callbacks
 
 Monitor agent behavior:
