@@ -124,3 +124,7 @@ class MemoryService:
     def delete_history(self, addr: MemoryAddress) -> None:
         """Remove all messages for the given address."""
         self.store.delete_conversation(addr)
+
+    def list_conversations(self, limit: int = 100, offset: int = 0) -> List[MemoryAddress]:
+        """List active conversations from the underlying store."""
+        return self.store.list_conversations(limit=limit, offset=offset)
