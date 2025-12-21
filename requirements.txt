@@ -10,9 +10,6 @@ redis>=4.0.0
 # Elasticsearch Storage
 elasticsearch>=8.0.0
 
-# Tool Extensions
-requests>=2.25.0
-
 # Model Context Protocol
 mcp
 
