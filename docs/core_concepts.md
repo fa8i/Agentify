@@ -97,6 +97,18 @@ store = InMemoryStore()
 ```python
 from agentify.memory.stores import RedisStore
 store = RedisStore(url="redis://localhost:6379/0")
+
+# Delete conversation
+store.delete_conversation(addr)
+```
+
+**ElasticsearchStore** - For advanced search and durability:
+```python
+from agentify.memory.stores import ElasticsearchStore
+store = ElasticsearchStore(url="http://localhost:9200", index_name="agentify-memory")
+
+# Delete conversation
+store.delete_conversation(addr)
 ```
 
 ### Memory Policy
