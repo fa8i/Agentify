@@ -10,7 +10,8 @@ readme = "README_PYPI.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Fabian M", email = "fabianmp_98@hotmail.com"}
+    {name = "Fabian M"},
+    {email = "fabianmp_98@hotmail.com"}
 ]
 keywords = ["agentify", "agentify-core","agent", "multi-agent", "ai", "llm", "openai", "framework"]
 classifiers = [
