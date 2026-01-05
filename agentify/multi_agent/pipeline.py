@@ -1,14 +1,12 @@
-from typing import List, Union, Generator, Any, AsyncGenerator
-
-from agentify.core.agent import BaseAgent
+from typing import List, Union, Generator, Any, AsyncGenerator, Optional, Dict
+from agentify.core.runnable import Runnable
 from agentify.memory.interfaces import MemoryAddress
-from agentify.multi_agent.team import Team
 
 # Type alias for what can be a step in the pipeline
-PipelineStep = Union[BaseAgent, Team, "SequentialPipeline", Any]
+PipelineStep = Runnable
 
 
-class SequentialPipeline:
+class SequentialPipeline(Runnable):
     """Executes a sequence of agents/teams/pipelines in order.
 
     The output of step N becomes the input of step N+1.
@@ -24,6 +22,8 @@ class SequentialPipeline:
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Union[str, Generator[str, None, None]]:
         """Run the pipeline sequentially."""
 
@@ -40,21 +40,27 @@ class SequentialPipeline:
 
             response: Union[str, Generator[str, None, None]]
 
-            if isinstance(step, BaseAgent):
-                step_addr = MemoryAddress(
+            # Unified Runnable execution
+            # If the step is an agent, we pass user_id/conversation_id via context or kwargs if needed
+            # but usually agents expect 'addr'.
+            # For backward compat, we construct addr if it's an agent-like object.
+            
+            # Simple assumption: All Runnables accept **kwargs.
+            # We pass session info as kwargs.
+            run_kwargs = {
+                "session_id": session_id, 
+                "user_id": user_id,
+                "context": context
+            }
+            # Add explicit memory address for BaseAgents (legacy support within Runnable)
+            if hasattr(step, "config") and hasattr(step, "run"):
+                 run_kwargs["memory_address"] = MemoryAddress(
                     user_id=user_id, conversation_id=session_id, agent_id=step_name
                 )
-                response = step.run(user_input=current_input, addr=step_addr)
+            
+            run_kwargs.update(kwargs) # Pass through any other kwargs
 
-            elif hasattr(step, "run"):
-                # Team, SequentialPipeline, HierarchicalTeam
-                response = step.run(
-                    user_input=current_input, session_id=session_id, user_id=user_id
-                )
-            else:
-                raise ValueError(
-                    f"Step {i} ({type(step)}) is not a valid agent or flow."
-                )
+            response = step.run(user_input=current_input, **run_kwargs)
 
             # If not last step, consume output to pass to next step
             if not is_last_step:
@@ -72,6 +78,8 @@ class SequentialPipeline:
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Async version of run(). Sequentially awaits each step."""
 
@@ -86,26 +94,20 @@ class SequentialPipeline:
 
             response: Union[str, AsyncGenerator[str, None]]
 
-            if isinstance(step, BaseAgent):
-                step_addr = MemoryAddress(
+            # Async execution
+            run_kwargs = {
+                "session_id": session_id, 
+                "user_id": user_id,
+                "context": context
+            }
+            if hasattr(step, "config") and hasattr(step, "arun"):
+                 run_kwargs["memory_address"] = MemoryAddress(
                     user_id=user_id, conversation_id=session_id, agent_id=step_name
                 )
-                response = await step.arun(user_input=current_input, addr=step_addr)
+            run_kwargs.update(kwargs)
 
-            elif hasattr(step, "arun"):
-                # Team, SequentialPipeline, HierarchicalTeam with async support
-                response = await step.arun(
-                    user_input=current_input, session_id=session_id, user_id=user_id
-                )
-            elif hasattr(step, "run"):
-                # Fallback to sync run for flows without arun
-                response = step.run(
-                    user_input=current_input, session_id=session_id, user_id=user_id
-                )
-            else:
-                raise ValueError(
-                    f"Step {i} ({type(step)}) is not a valid agent or flow."
-                )
+            # Polymorphic call
+            response = await step.arun(user_input=current_input, **run_kwargs)
 
             # If not last step, consume output to pass to next step
             if not is_last_step:

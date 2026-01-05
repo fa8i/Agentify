@@ -1,10 +1,11 @@
-from typing import List, Optional, Union, Generator, AsyncGenerator
+from typing import List, Optional, Union, Generator, AsyncGenerator, Any, Dict
+from agentify.core.runnable import Runnable
 from agentify.core.agent import BaseAgent
 from agentify.memory.interfaces import MemoryAddress
 from agentify.multi_agent.tool_wrapper import AgentTool
 
 
-class Team:
+class Team(Runnable):
     """Orchestrates a group of agents.
 
     The Team class:
@@ -33,6 +34,8 @@ class Team:
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Union[str, Generator[str, None, None]]:
         """Run the team workflow.
 
@@ -66,11 +69,10 @@ class Team:
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Union[str, AsyncGenerator[str, None]]:
-        """Async version of run().
-        
-        Uses the supervisor's arun() for async execution with parallel tool calls.
-        """
+        """Async version of run()."""
         # 1. Setup Supervisor Address
         supervisor_addr = MemoryAddress(
             user_id=user_id,

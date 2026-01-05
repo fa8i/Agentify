@@ -9,6 +9,8 @@ from io import BytesIO
 import inspect
 from typing import Any, Dict, Generator, List, Optional, Union, Iterator, Callable, AsyncGenerator
 
+from agentify.core.runnable import Runnable
+
 from PIL import Image
 from openai import RateLimitError
 
@@ -22,12 +24,15 @@ from agentify.core.callbacks import LoggingCallbackHandler
 logger = logging.getLogger(__name__)
 
 
-class BaseAgent:
+class BaseAgent(Runnable):
     """Core AI Agent class based on chat completions interface.
 
     BaseAgent is the primary abstraction for building AI agents in Agentify. It provides
     a unified interface for interacting with various LLM providers (OpenAI, Azure, DeepSeek,
     Gemini, etc.) that implement the OpenAI SDK-compatible chat completions format.
+    
+    It implements the Runnable protocol, making it composable within pipelines and teams.
+
 
     The agent orchestrates the interaction between users, LLMs, and registered tools, managing
     conversation history, tool execution, and model responses. It supports both synchronous
@@ -721,6 +726,8 @@ class BaseAgent:
         addr: Optional[MemoryAddress] = None,
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Union[str, Generator[str, None, None]]:
         """Main entrypoint to interact with the agent.
         
@@ -729,10 +736,16 @@ class BaseAgent:
             addr: The memory address for the conversation.
             image_path: Optional path to an image file.
             image_detail_override: Optional detail level for image processing.
+            context: Shared dictionary for inter-agent state (Runnable protocol).
+            **kwargs: Additional arguments for compatibility.
             
         Returns:
             The agent's response as a string or a generator if streaming is enabled.
         """
+        # If addr is not provided, try to get it from kwargs (Protocol compatibility)
+        if addr is None and "memory_address" in kwargs:
+             addr = kwargs["memory_address"]
+
         a = self._addr_or_raise(addr)
         response_generator = self._execute_agent_loop(
             user_input,
@@ -1071,6 +1084,8 @@ class BaseAgent:
         addr: Optional[MemoryAddress] = None,
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Async entrypoint to interact with the agent.
         
@@ -1083,11 +1098,18 @@ class BaseAgent:
             addr: The memory address for the conversation.
             image_path: Optional path to an image file.
             image_detail_override: Optional detail level for image processing.
+            context: Shared dictionary for inter-agent state (Runnable protocol).
+            **kwargs: Additional arguments for compatibility.
             
         Returns:
             The agent's response as a string or an async generator if streaming is enabled.
         """
+        # If addr is not provided, try to get it from kwargs (Protocol compatibility)
+        if addr is None and "memory_address" in kwargs:
+             addr = kwargs["memory_address"]
+
         a = self._addr_or_raise(addr)
+
         response_generator = self._aexecute_agent_loop(
             user_input,
             addr=a,

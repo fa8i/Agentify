@@ -1,5 +1,5 @@
 import pytest
-from agentify.tools.planning import TodoTool
+from agentify.extensions.tools.planning import TodoTool
 
 
 class TestPlanningTool:

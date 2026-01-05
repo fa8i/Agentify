@@ -1,10 +1,11 @@
-from typing import Dict, List, Union, Generator, AsyncGenerator
+from typing import Dict, List, Union, Generator, AsyncGenerator, Any, Optional
+from agentify.core.runnable import Runnable
 from agentify.core.agent import BaseAgent
 from agentify.memory.interfaces import MemoryAddress
 from agentify.multi_agent.tool_wrapper import AgentTool, FlowTool, Flow
 
 
-class HierarchicalTeam:
+class HierarchicalTeam(Runnable):
     """Orchestrates a hierarchy of agents (Tree structure).
 
     - Root agent is the entry point.
@@ -30,6 +31,8 @@ class HierarchicalTeam:
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Union[str, Generator[str, None, None]]:
         """Run the hierarchical flow."""
 
@@ -51,6 +54,8 @@ class HierarchicalTeam:
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Async version of run(). Uses root agent's arun() for async execution."""
 

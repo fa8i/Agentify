@@ -1,7 +1,7 @@
 import os
 import tempfile
 import pytest
-from agentify.tools.filesystem import ListDirTool, ReadFileTool, WriteFileTool
+from agentify.extensions.tools.filesystem import ListDirTool, ReadFileTool, WriteFileTool
 
 
 class TestFilesystemTools:
