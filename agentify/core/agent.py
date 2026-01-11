@@ -416,6 +416,22 @@ class BaseAgent(Runnable):
             )
             raise ValueError(f"Invalid JSON arguments: {exc}")
 
+    def _serialize_tool_result(self, result: Any) -> str:
+        """Normalize tool results to a JSON string when possible."""
+        if isinstance(result, bytes):
+            try:
+                return result.decode("utf-8")
+            except UnicodeDecodeError:
+                return base64.b64encode(result).decode("utf-8")
+
+        if isinstance(result, (dict, list)):
+            try:
+                return json.dumps(result, ensure_ascii=False)
+            except TypeError:
+                return json.dumps({"result": str(result)}, ensure_ascii=False)
+
+        return str(result)
+
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Execute a single tool and return its output as a string."""
         tool = self._tools.get(tool_name)
@@ -431,7 +447,7 @@ class BaseAgent(Runnable):
 
         try:
             result = tool(**arguments)
-            result_str = str(result)
+            result_str = self._serialize_tool_result(result)
             for cb in self.callbacks:
                 cb.on_tool_finish(tool_name, result_str)
             return result_str
@@ -726,7 +742,6 @@ class BaseAgent(Runnable):
         addr: Optional[MemoryAddress] = None,
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[str, Generator[str, None, None]]:
         """Main entrypoint to interact with the agent.
@@ -736,7 +751,6 @@ class BaseAgent(Runnable):
             addr: The memory address for the conversation.
             image_path: Optional path to an image file.
             image_detail_override: Optional detail level for image processing.
-            context: Shared dictionary for inter-agent state (Runnable protocol).
             **kwargs: Additional arguments for compatibility.
             
         Returns:
@@ -876,7 +890,7 @@ class BaseAgent(Runnable):
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: tool(**arguments)
                 )
-            result_str = str(result)
+            result_str = self._serialize_tool_result(result)
             for cb in self.callbacks:
                 cb.on_tool_finish(tool_name, result_str)
             return result_str
@@ -1084,7 +1098,6 @@ class BaseAgent(Runnable):
         addr: Optional[MemoryAddress] = None,
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Async entrypoint to interact with the agent.
@@ -1098,7 +1111,6 @@ class BaseAgent(Runnable):
             addr: The memory address for the conversation.
             image_path: Optional path to an image file.
             image_detail_override: Optional detail level for image processing.
-            context: Shared dictionary for inter-agent state (Runnable protocol).
             **kwargs: Additional arguments for compatibility.
             
         Returns:

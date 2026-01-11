@@ -6,8 +6,6 @@ class Runnable(Protocol):
     def run(
         self,
         user_input: str,
-        *,
-        context: Optional[Dict[str, Any]] = None,
         **kwargs: Any
     ) -> Union[str, Generator[str, None, None]]:
         """Synchronous execution."""
@@ -16,8 +14,6 @@ class Runnable(Protocol):
     async def arun(
         self,
         user_input: str,
-        *,
-        context: Optional[Dict[str, Any]] = None,
         **kwargs: Any
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Asynchronous execution."""
