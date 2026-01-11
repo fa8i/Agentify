@@ -50,6 +50,19 @@ class LoggingCallbackHandler(AgentCallbackHandler):
 
     def __init__(self, logger_instance: Optional[logging.Logger] = None):
         self.logger = logger_instance or logger
+        self.redact_keys = {"password", "api_key", "token", "secret", "key", "authorization"}
+
+    def _mask_secrets(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively mask sensitive keys in a dictionary."""
+        masked = {}
+        for k, v in data.items():
+            if k.lower() in self.redact_keys:
+                masked[k] = "******"
+            elif isinstance(v, dict):
+                masked[k] = self._mask_secrets(v)
+            else:
+                masked[k] = v
+        return masked
 
     def on_agent_start(self, agent_name: str, user_input: str) -> None:
         self.logger.info(f"Agent '{agent_name}' started. Input: {user_input[:100]}...")
@@ -60,7 +73,8 @@ class LoggingCallbackHandler(AgentCallbackHandler):
         )
 
     def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> None:
-        self.logger.info(f"Tool '{tool_name}' started. Args: {args}")
+        safe_args = self._mask_secrets(args)
+        self.logger.info(f"Tool '{tool_name}' started. Args: {safe_args}")
 
     def on_tool_finish(self, tool_name: str, output: str) -> None:
         self.logger.info(f"Tool '{tool_name}' finished. Output: {output[:100]}...")
