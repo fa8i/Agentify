@@ -1,4 +1,5 @@
 from typing import List, Optional, Union, Generator, AsyncGenerator, Any, Dict
+import copy
 from agentify.core.runnable import Runnable
 from agentify.core.agent import BaseAgent
 from agentify.memory.interfaces import MemoryAddress
@@ -34,7 +35,6 @@ class Team(Runnable):
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
-        context: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[str, Generator[str, None, None]]:
         """Run the team workflow.
@@ -51,6 +51,11 @@ class Team(Runnable):
             agent_id=self.supervisor.config.name,
         )
 
+        # Clone supervisor to avoid tool pollution across runs
+        # Use shallow copy + manual tools dict copy to avoid deepcopying net clients
+        supervisor = copy.copy(self.supervisor)
+        supervisor._tools = self.supervisor._tools.copy()
+
         # 2. Register Workers as Tools (Dynamic Registration)
         # Wrap each worker in an AgentTool, bound to the supervisor's address context
         worker_tools = []
@@ -58,18 +63,17 @@ class Team(Runnable):
             tool_wrapper = AgentTool(agent=worker, parent_addr=supervisor_addr)
             worker_tools.append(tool_wrapper)
 
-            # Register with supervisor
-            self.supervisor.register_tool(tool_wrapper)
+            # Register with CLONED supervisor
+            supervisor.register_tool(tool_wrapper)
 
         # 3. Run Supervisor
-        return self.supervisor.run(user_input=user_input, addr=supervisor_addr)
+        return supervisor.run(user_input=user_input, addr=supervisor_addr)
 
     async def arun(
         self,
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
-        context: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Async version of run()."""
@@ -80,11 +84,14 @@ class Team(Runnable):
             agent_id=self.supervisor.config.name,
         )
 
+        supervisor = copy.copy(self.supervisor)
+        supervisor._tools = self.supervisor._tools.copy()
+
         # 2. Register Workers as Tools
         for worker in self.workers:
             tool_wrapper = AgentTool(agent=worker, parent_addr=supervisor_addr)
-            self.supervisor.register_tool(tool_wrapper)
+            supervisor.register_tool(tool_wrapper)
 
         # 3. Run Supervisor asynchronously
-        return await self.supervisor.arun(user_input=user_input, addr=supervisor_addr)
+        return await supervisor.arun(user_input=user_input, addr=supervisor_addr)
 
