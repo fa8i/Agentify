@@ -12,14 +12,27 @@ class BaseFilesystemTool(Tool):
         self.sandbox_dir = os.path.abspath(sandbox_dir or os.getcwd())
 
     def _validate_path(self, file_path: str) -> str:
-        """Ensure path is within sandbox."""
-        # Handle absolute paths by checking if they start with sandbox
-        abs_path = os.path.abspath(os.path.join(self.sandbox_dir, file_path))
+        """Ensure path is within sandbox using secure path resolution."""
+        # 1. Resolve the sandbox path to its real path (resolving symlinks)
+        real_sandbox = os.path.realpath(self.sandbox_dir)
         
-        if not abs_path.startswith(self.sandbox_dir):
-            raise ValueError(f"Access denied: Path '{file_path}' is outside sandbox directory '{self.sandbox_dir}'")
+        # 2. Join and resolve the target path
+        params_path = os.path.join(real_sandbox, file_path)
+        real_target = os.path.realpath(params_path)
         
-        return abs_path
+        # 3. Use commonpath to check if the target is truly inside (or is) the sandbox
+        # commonpath returns the longest common sub-path. If target is inside sandbox,
+        # the common path must be the sandbox path itself.
+        try:
+            common = os.path.commonpath([real_sandbox, real_target])
+        except ValueError:
+            # Can happen on Windows if paths are on different drives
+            raise ValueError(f"Access denied: Path '{file_path}' is on a different drive than sandbox.")
+
+        if common != real_sandbox:
+             raise ValueError(f"Access denied: Path '{file_path}' traverses outside sandbox directory '{self.sandbox_dir}'")
+        
+        return real_target
 
 
 class ListDirTool(BaseFilesystemTool):
