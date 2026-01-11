@@ -19,10 +19,10 @@ class Tool:
     def name(self) -> str:
         return self.schema["name"]
 
-    def __call__(self, **kwargs: Any) -> str:
+    def __call__(self, *args: Any, **kwargs: Any) -> str:
         """Executes the function and returns JSON or string; captures generic errors."""
         try:
-            result = self.func(**kwargs)
+            result = self.func(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
 

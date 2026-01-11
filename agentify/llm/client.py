@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 from typing import Union, Dict, Any, Optional, Callable
 from openai import OpenAI, AzureOpenAI, AsyncOpenAI, AsyncAzureOpenAI
 
-# load_dotenv()  <-- Removed to prevent side-effects. User must load env or pass config explicitly.
 
 LLMClientType = Union[OpenAI, AzureOpenAI]
 AsyncLLMClientType = Union[AsyncOpenAI, AsyncAzureOpenAI]

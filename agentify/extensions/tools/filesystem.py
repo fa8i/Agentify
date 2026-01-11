@@ -13,16 +13,11 @@ class BaseFilesystemTool(Tool):
 
     def _validate_path(self, file_path: str) -> str:
         """Ensure path is within sandbox using secure path resolution."""
-        # 1. Resolve the sandbox path to its real path (resolving symlinks)
         real_sandbox = os.path.realpath(self.sandbox_dir)
         
-        # 2. Join and resolve the target path
         params_path = os.path.join(real_sandbox, file_path)
         real_target = os.path.realpath(params_path)
-        
-        # 3. Use commonpath to check if the target is truly inside (or is) the sandbox
-        # commonpath returns the longest common sub-path. If target is inside sandbox,
-        # the common path must be the sandbox path itself.
+
         try:
             common = os.path.commonpath([real_sandbox, real_target])
         except ValueError:
