@@ -106,7 +106,8 @@ class BaseAgent(Runnable):
         # Decouple callbacks from config to avoid mutation of shared config
         self.callbacks = list(self.config.callbacks) if self.config.callbacks else []
         if not self.callbacks:
-            self.callbacks.append(LoggingCallbackHandler(logger))
+            # Default: No callbacks (silent). User must explicitly add LoggingCallbackHandler if desired.
+            pass
 
         self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
 
