@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 import asyncio
+import hashlib
 from agentify.core.agent import BaseAgent
 from agentify.core.tool import Tool
 from agentify.memory.interfaces import MemoryAddress
@@ -245,10 +246,11 @@ class SpawnAgentTool(Tool):
         if system_prompt:
             new_config.system_prompt = system_prompt
         
-        # Create a unique address for this interaction
+        # Create a unique address for this interaction using hash of instructions
+        instr_hash = hashlib.sha256(instructions.encode("utf-8")).hexdigest()[:16]
         child_addr = MemoryAddress(
             user_id=self.parent_addr.user_id,
-            conversation_id=f"{self.parent_addr.conversation_id}_{role_name}_{instructions[:10]}",
+            conversation_id=f"{self.parent_addr.conversation_id}_{role_name}_{instr_hash}",
             agent_id=new_config.name,
         )
 
@@ -288,9 +290,10 @@ class SpawnAgentTool(Tool):
         if system_prompt:
             new_config.system_prompt = system_prompt
         
+        instr_hash = hashlib.sha256(instructions.encode("utf-8")).hexdigest()[:16]
         child_addr = MemoryAddress(
             user_id=self.parent_addr.user_id,
-            conversation_id=f"{self.parent_addr.conversation_id}_{role_name}_{instructions[:10]}",
+            conversation_id=f"{self.parent_addr.conversation_id}_{role_name}_{instr_hash}",
             agent_id=new_config.name,
         )
 
