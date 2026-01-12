@@ -21,6 +21,7 @@ class AgentConfig:
     timeout: int = 60
     stream: bool = False
     max_retries: int = 3
+    verbose: bool = True
     max_tool_iter: Optional[int] = 10
     reasoning_effort: Optional[str] = None
     model_kwargs: Optional[Dict[str, Any]] = None

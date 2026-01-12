@@ -105,9 +105,8 @@ class BaseAgent(Runnable):
 
         # Decouple callbacks from config to avoid mutation of shared config
         self.callbacks = list(self.config.callbacks) if self.config.callbacks else []
-        if not self.callbacks:
-            # Default: No callbacks (silent). User must explicitly add LoggingCallbackHandler if desired.
-            pass
+        if not self.callbacks and self.config.verbose:
+            self.callbacks.append(LoggingCallbackHandler(logger))
 
         self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
 
@@ -1060,7 +1059,13 @@ class BaseAgent(Runnable):
                 args_str = tc["function"]["arguments"]
                 try:
                     args = self._parse_tool_arguments(tool_name, args_str)
-                    result_content = await self._aexecute_tool(tool_name, args)
+                    # Add timeout to prevent indefinite hangs
+                    result_content = await asyncio.wait_for(
+                        self._aexecute_tool(tool_name, args),
+                        timeout=60.0  # Default 60s timeout for tools
+                    )
+                except asyncio.TimeoutError:
+                    result_content = json.dumps({"error": f"Tool '{tool_name}' execution timed out after 60 seconds."})
                 except ValueError as e:
                     result_content = json.dumps({"error": str(e)})
                 return tool_call_id, tool_name, result_content

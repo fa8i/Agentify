@@ -52,6 +52,13 @@ class LoggingCallbackHandler(AgentCallbackHandler):
         self.logger = logger_instance or logger
         self.redact_keys = {"password", "api_key", "token", "secret", "key", "authorization"}
 
+        # Auto-configure handler if none exists
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setLevel(logging.INFO)
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.INFO)
+
     def _mask_secrets(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively mask sensitive keys in a dictionary."""
         masked = {}
@@ -65,19 +72,26 @@ class LoggingCallbackHandler(AgentCallbackHandler):
         return masked
 
     def on_agent_start(self, agent_name: str, user_input: str) -> None:
-        self.logger.info(f"Agent '{agent_name}' started. Input: {user_input[:100]}...")
+        self.logger.info(
+            f"{Colors.BLUE}[VERBOSE] Agent '{agent_name}' started.{Colors.RESET} Input: {user_input[:100]}..."
+        )
 
     def on_agent_finish(self, agent_name: str, response: str) -> None:
         self.logger.info(
-            f"Agent '{agent_name}' finished. Response: {response[:100]}..."
+            f"{Colors.BLUE}[VERBOSE] Agent '{agent_name}' finished.{Colors.RESET} Response: {response[:100]}..."
         )
 
     def on_tool_start(self, tool_name: str, args: Dict[str, Any]) -> None:
+        # Redact sensitive values
         safe_args = self._mask_secrets(args)
-        self.logger.info(f"Tool '{tool_name}' started. Args: {safe_args}")
+        self.logger.info(
+            f"{Colors.CYAN}[VERBOSE] Tool '{tool_name}' started.{Colors.RESET} Args: {safe_args}"
+        )
 
     def on_tool_finish(self, tool_name: str, output: str) -> None:
-        self.logger.info(f"Tool '{tool_name}' finished. Output: {output[:100]}...")
+        self.logger.info(
+            f"{Colors.CYAN}[VERBOSE] Tool '{tool_name}' finished.{Colors.RESET} Output: {output[:100]}..."
+        )
 
     def on_llm_start(self, model_name: str, messages: List[Dict[str, Any]]) -> None:
         self.logger.debug(f"LLM '{model_name}' started. Messages: {len(messages)}")
