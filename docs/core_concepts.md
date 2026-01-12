@@ -316,6 +316,9 @@ agent = BaseAgent(
 )
 ```
 
+> **Security Note**: The default `LoggingCallbackHandler` (enabled when `verbose=True`) automatically redacts sensitive keys like `password`, `api_key`, or `token` from tool arguments in the logs.
+
+
 ## Providers
 
 Agentify supports multiple LLM providers:

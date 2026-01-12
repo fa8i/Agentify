@@ -33,9 +33,11 @@ For optional features:
 pip install agentify-core[all]  # Installs all optional dependencies
 ```
 
-## Quick Start
-
+### Quick Start
 ```python
+# Note: Agentify does not auto-load .env. Load it manually if needed.
+# from dotenv import load_dotenv; load_dotenv()
+
 from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress, tool
 from agentify.memory.stores import InMemoryStore
 
@@ -58,7 +60,8 @@ agent = BaseAgent(
         provider="provider",
         model_name="model",
         reasoning_effort="high",  # optional param:"low", "medium", "high"
-        model_kwargs={"max_completion_tokens": 5000} # Pass model-specific params
+        model_kwargs={"max_completion_tokens": 5000}, # Pass model-specific params
+        verbose=True, # Controls logging (True by default)
     ),
     memory=memory,
     memory_address=addr,
