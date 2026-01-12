@@ -32,9 +32,6 @@ class MemoryAddress:
 
     def key_str(self, prefix: str = "mem") -> str:
         """Human-readable key for key-value backends (e.g., Redis)."""
-        # Import locally to avoid top-level import bloat if not needed elsewhere
-        from urllib.parse import quote
-        
         parts = [
             ("v", self.api_version),
             ("t", self.tenant_id),
@@ -42,9 +39,7 @@ class MemoryAddress:
             ("c", self.conversation_id),
             ("a", self.agent_id),
         ] + list(self.extras)
-        
-        # URL encode values to ensure key separability if they contain ':' or '='
-        joined = ":".join(f"{k}={quote(str(v))}" for k, v in parts if v)
+        joined = ":".join(f"{k}={v}" for k, v in parts if v)
         return f"{prefix}:{joined}" if joined else prefix
 
 
@@ -72,7 +67,12 @@ class Message:
             d["name"] = self.name
         if self.tool_call_id is not None:
             d["tool_call_id"] = self.tool_call_id
-        d.update(self.metadata)  # carry extra fields (e.g., tool_calls)
+        
+        # Merge metadata but do NOT overwrite reserved keys
+        reserved = {"role", "content", "name", "tool_call_id"}
+        for k, v in self.metadata.items():
+            if k not in reserved:
+                d[k] = v
         return d
 
     def to_dict(self) -> Dict[str, Any]:
