@@ -3,6 +3,7 @@ import sqlite3
 import json
 import logging
 from typing import List, Tuple, Any
+from urllib.parse import unquote
 from ..interfaces import ConversationStore, MemoryAddress, Message
 
 logger = logging.getLogger(__name__)
@@ -178,13 +179,14 @@ class SQLiteStore(ConversationStore):
                     if "=" not in part:
                         continue
                     k, v = part.split("=", 1)
-                    if k == "v": kwargs["api_version"] = v
-                    elif k == "t": kwargs["tenant_id"] = v
-                    elif k == "u": kwargs["user_id"] = v
-                    elif k == "c": kwargs["conversation_id"] = v
-                    elif k == "a": kwargs["agent_id"] = v
+                    decoded = unquote(v)
+                    if k == "v": kwargs["api_version"] = decoded
+                    elif k == "t": kwargs["tenant_id"] = decoded
+                    elif k == "u": kwargs["user_id"] = decoded
+                    elif k == "c": kwargs["conversation_id"] = decoded
+                    elif k == "a": kwargs["agent_id"] = decoded
                     else:
-                        extras.append((k, v))
+                        extras.append((k, decoded))
                 
                 if extras:
                     kwargs["extras"] = tuple(extras)

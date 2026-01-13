@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 from typing import List
+from urllib.parse import unquote
 
 try:
     import redis
@@ -80,13 +81,14 @@ class RedisStore(ConversationStore):
                 if "=" not in part:
                     continue
                 key, val = part.split("=", 1)
-                if key == "v": kwargs["api_version"] = val
-                elif key == "t": kwargs["tenant_id"] = val
-                elif key == "u": kwargs["user_id"] = val
-                elif key == "c": kwargs["conversation_id"] = val
-                elif key == "a": kwargs["agent_id"] = val
+                decoded = unquote(val)
+                if key == "v": kwargs["api_version"] = decoded
+                elif key == "t": kwargs["tenant_id"] = decoded
+                elif key == "u": kwargs["user_id"] = decoded
+                elif key == "c": kwargs["conversation_id"] = decoded
+                elif key == "a": kwargs["agent_id"] = decoded
                 else:
-                    extras.append((key, val))
+                    extras.append((key, decoded))
             
             if extras:
                 kwargs["extras"] = tuple(extras)

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 from datetime import datetime, timezone
 import uuid
+from urllib.parse import quote
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,15 +31,20 @@ class MemoryAddress:
             self.extras,
         )
 
+    def _encode_part(self, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return quote(value, safe="")
+
     def key_str(self, prefix: str = "mem") -> str:
         """Human-readable key for key-value backends (e.g., Redis)."""
         parts = [
-            ("v", self.api_version),
-            ("t", self.tenant_id),
-            ("u", self.user_id),
-            ("c", self.conversation_id),
-            ("a", self.agent_id),
-        ] + list(self.extras)
+            ("v", self._encode_part(self.api_version)),
+            ("t", self._encode_part(self.tenant_id)),
+            ("u", self._encode_part(self.user_id)),
+            ("c", self._encode_part(self.conversation_id)),
+            ("a", self._encode_part(self.agent_id)),
+        ] + [(k, self._encode_part(v)) for k, v in self.extras]
         joined = ":".join(f"{k}={v}" for k, v in parts if v)
         return f"{prefix}:{joined}" if joined else prefix
 
