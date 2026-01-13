@@ -150,7 +150,7 @@ from agentify.extensions.tools import (
     WeatherTool,      # Weather info
     TodoTool,         # Task planning
     ListDirTool,      # List files
-    ReadFileTool,     # Read files
+    ReadFileTool,     # Read files (supports max_bytes)
     WriteFileTool,    # Write files
 )
 

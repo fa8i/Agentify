@@ -131,14 +131,14 @@ class MemoryService:
         store: ConversationStore,
         policy: Optional[MemoryPolicy] = None,
         log_enabled: bool = True,
-        max_log_length: Optional[int] = None,
+        max_log_length: Optional[int] = 5000,
     )
 ```
 
 **Methods:**
 
 #### `append_history(addr, message)`
-Add a message to history.
+Add a message to history. Logging truncates content to `max_log_length` and redacts common secrets.
 
 #### `reset_history(addr, system_message)`
 Replace history with system message.
@@ -169,7 +169,7 @@ class MemoryAddress:
 **Methods:**
 
 #### `key_str(prefix="mem")`
-Generate storage key.
+Generate storage key. Values are URL-encoded for safe storage.
 
 **Returns:** `str`
 
@@ -403,7 +403,7 @@ Lists files and directories.
 class ReadFileTool(Tool):
     def __init__(self, sandbox_dir: Optional[str] = None)
 ```
-Reads file contents.
+Reads file contents. Accepts `max_bytes` per call (default 1MB, hard cap 5MB).
 
 #### WriteFileTool
 ```python

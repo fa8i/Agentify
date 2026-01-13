@@ -266,6 +266,7 @@ policy = MemoryPolicy(
 )
 
 memory = MemoryService(store, policy)
+# Logs are truncated to max_log_length and redact common secrets.
 ```
 
 ## Client Configuration Override
