@@ -695,7 +695,7 @@ class BaseAgent(Runnable):
             assembled_tool_calls = self._expand_tool_calls(assembled_tool_calls)
             full_turn_content = "".join(current_turn_content_parts)
 
-            # If no tool calls, we are done
+            # Exit if no tool calls are present
             if not assembled_tool_calls:
                 # Add reasoning to metadata if present
                 msg_kwargs = {}
@@ -1050,7 +1050,7 @@ class BaseAgent(Runnable):
             assembled_tool_calls = self._expand_tool_calls(assembled_tool_calls)
             full_turn_content = "".join(current_turn_content_parts)
 
-            # If no tool calls, we are done
+            # Exit if no tool calls are present
             if not assembled_tool_calls:
                 msg_kwargs = {}
                 if full_reasoning_content:

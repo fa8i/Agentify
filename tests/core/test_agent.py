@@ -115,3 +115,38 @@ def test_tool_execution(agent_config, memory_service, memory_address):
     assert len(history) == 5
     assert history[3]["role"] == "tool"
     assert history[3]["content"] == "42"
+
+
+def test_tool_schema_validation(agent_config, memory_service, memory_address):
+    def my_tool(x: int):
+        return str(x * 2)
+
+    tool = Tool(
+        schema={
+            "name": "double",
+            "description": "Doubles x",
+            "parameters": {
+                "type": "object",
+                "properties": {"x": {"type": "integer"}},
+                "required": ["x"],
+            },
+        },
+        func=my_tool,
+    )
+
+    mock_factory = MagicMock()
+    mock_client = MagicMock()
+    mock_factory.create_client.return_value = mock_client
+
+    agent = BaseAgent(
+        config=agent_config,
+        memory=memory_service,
+        memory_address=memory_address,
+        tools=[tool],
+        client_factory=mock_factory,
+    )
+
+    result = agent._execute_tool("double", {})
+
+    assert "schema validation" in result
+    assert "error" in result

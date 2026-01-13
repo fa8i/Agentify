@@ -40,13 +40,8 @@ class SequentialPipeline(Runnable):
 
             response: Union[str, Generator[str, None, None]]
 
-            # Unified Runnable execution
-            # If the step is an agent, we pass user_id/conversation_id via context or kwargs if needed
-            # but usually agents expect 'addr'.
-            # For backward compat, we construct addr if it's an agent-like object.
-            
-            # Simple assumption: All Runnables accept **kwargs.
-            # We pass session info as kwargs.
+            # Pass session info for unified Runnable execution.
+            # Support legacy agents by constructing a MemoryAddress if applicable.
             run_kwargs = {
                 "session_id": session_id, 
                 "user_id": user_id,

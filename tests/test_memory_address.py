@@ -12,7 +12,7 @@ def test_memory_address_encoding_roundtrip(tmp_path):
         user_id="user:1",
         conversation_id="conv=1",
         agent_id="agent/name",
-        extras=(("x", "a:b"),),
+        extras=(("chan:1", "a:b"),),
     )
     store.append_message(addr, Message(role="user", content="hi"))
 

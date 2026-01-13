@@ -121,9 +121,8 @@ class ElasticsearchStore(ConversationStore):
     def read_messages(self, addr: MemoryAddress, start: int = 0, end: int = -1) -> List[Message]:
         must = self._build_filter_query(addr)
         
-        # We need to fetch enough messages to support the slice.
-        # Since 'end' can be -1 (all), we might need a large size or scroll.
-        # For chat history, usually 100-1000 is enough.
+        # Fetch enough messages to support the slice.
+        # If 'end' is -1 (all), a large size or scroll might be required.
         size = 1000 if end == -1 else (end + 20)
 
         query = {
@@ -184,9 +183,9 @@ class ElasticsearchStore(ConversationStore):
         self.client.delete_by_query(index=self.index_name, body=query, refresh=True)
 
     def set_ttl(self, addr: MemoryAddress, seconds: int) -> None:
-        # Implementing TTL in ES usually requires Index Lifecycle Management (ILM) 
-        # or a separate cleanup job, as TTL is per-index or per-document requires setup.
-        # For simplicity, we log strictly: This is not natively supported per-conversation efficiently.
+        # Implementing TTL in ES typically requires Index Lifecycle Management (ILM)
+        # or a separate cleanup job.
+        # Log warning as this is not natively supported per-conversation efficiently.
         logger.warning("set_ttl is not fully supported in simple ElasticsearchStore yet.")
 
     def list_conversations(self, limit: int = 100, offset: int = 0) -> List[MemoryAddress]:

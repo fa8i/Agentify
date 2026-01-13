@@ -10,14 +10,13 @@ class BaseFilesystemTool(Tool):
     
     def __init__(self, schema: Dict[str, Any], func: Any, sandbox_dir: Optional[str] = None):
         super().__init__(schema, func)
-        # If no sandbox provided, default to current working directory or a safe temp dir could be better 
-        # but for this agent library, let's default to CWD but allow override.
+        # Default to current working directory if no sandbox is provided.
         self.sandbox_dir = os.path.abspath(sandbox_dir or os.getcwd())
 
     def _validate_path(self, file_path: str) -> str:
         """Ensure path is within sandbox."""
-        # Resolve user path relative to sandbox
-        # Note: os.path.join discards sandbox_dir if file_path is absolute, so we handle that
+        # Resolve user path relative to sandbox.
+        # Note: os.path.join discards sandbox_dir if file_path is absolute.
         full_path = os.path.join(self.sandbox_dir, file_path)
         
         # Resolve symlinks and .. components
