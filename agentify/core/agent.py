@@ -13,6 +13,7 @@ from agentify.core.runnable import Runnable
 
 from PIL import Image
 from openai import RateLimitError
+from jsonschema import validate, ValidationError
 
 from agentify.core.tool import Tool
 from agentify.llm.client import LLMClientFactory, LLMClientType, AsyncLLMClientType
@@ -416,6 +417,22 @@ class BaseAgent(Runnable):
             )
             raise ValueError(f"Invalid JSON arguments: {exc}")
 
+    def _validate_tool_arguments(self, tool: Tool, arguments: Dict[str, Any]) -> None:
+        """Validate tool arguments against the tool's JSON schema."""
+        if not isinstance(arguments, dict):
+            raise ValueError(f"Tool '{tool.name}' arguments must be a JSON object.")
+
+        params_schema = tool.schema.get("parameters") or {"type": "object"}
+        if "type" not in params_schema:
+            params_schema = {"type": "object", **params_schema}
+
+        try:
+            validate(instance=arguments, schema=params_schema)
+        except ValidationError as exc:
+            raise ValueError(
+                f"Tool '{tool.name}' arguments failed schema validation: {exc.message}"
+            ) from exc
+
     def _serialize_tool_result(self, result: Any) -> str:
         """Normalize tool results to a JSON string when possible."""
         if isinstance(result, bytes):
@@ -446,6 +463,7 @@ class BaseAgent(Runnable):
             return err_msg
 
         try:
+            self._validate_tool_arguments(tool, arguments)
             result = tool(**arguments)
             result_str = self._serialize_tool_result(result)
             for cb in self.callbacks:
@@ -879,6 +897,7 @@ class BaseAgent(Runnable):
             return err_msg
 
         try:
+            self._validate_tool_arguments(tool, arguments)
             # Check for async_func attribute (used by AgentTool, FlowTool, SpawnAgentTool)
             if hasattr(tool, "async_func") and asyncio.iscoroutinefunction(tool.async_func):
                 result = await tool.async_func(**arguments)

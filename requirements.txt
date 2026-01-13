@@ -2,6 +2,7 @@
 openai
 python-dotenv
 Pillow
+jsonschema>=4.0.0
 
 # --- Optional Extensions ---
 # Redis Storage
