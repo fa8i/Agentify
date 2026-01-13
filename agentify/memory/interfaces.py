@@ -36,6 +36,9 @@ class MemoryAddress:
             return None
         return quote(value, safe="")
 
+    def _encode_key(self, key: str) -> str:
+        return quote(key, safe="")
+
     def key_str(self, prefix: str = "mem") -> str:
         """Human-readable key for key-value backends (e.g., Redis)."""
         parts = [
@@ -44,7 +47,7 @@ class MemoryAddress:
             ("u", self._encode_part(self.user_id)),
             ("c", self._encode_part(self.conversation_id)),
             ("a", self._encode_part(self.agent_id)),
-        ] + [(k, self._encode_part(v)) for k, v in self.extras]
+        ] + [(self._encode_key(k), self._encode_part(v)) for k, v in self.extras]
         joined = ":".join(f"{k}={v}" for k, v in parts if v)
         return f"{prefix}:{joined}" if joined else prefix
 

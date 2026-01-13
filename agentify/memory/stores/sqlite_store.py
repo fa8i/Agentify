@@ -179,14 +179,15 @@ class SQLiteStore(ConversationStore):
                     if "=" not in part:
                         continue
                     k, v = part.split("=", 1)
-                    decoded = unquote(v)
-                    if k == "v": kwargs["api_version"] = decoded
-                    elif k == "t": kwargs["tenant_id"] = decoded
-                    elif k == "u": kwargs["user_id"] = decoded
-                    elif k == "c": kwargs["conversation_id"] = decoded
-                    elif k == "a": kwargs["agent_id"] = decoded
+                    decoded_key = unquote(k)
+                    decoded_val = unquote(v)
+                    if decoded_key == "v": kwargs["api_version"] = decoded_val
+                    elif decoded_key == "t": kwargs["tenant_id"] = decoded_val
+                    elif decoded_key == "u": kwargs["user_id"] = decoded_val
+                    elif decoded_key == "c": kwargs["conversation_id"] = decoded_val
+                    elif decoded_key == "a": kwargs["agent_id"] = decoded_val
                     else:
-                        extras.append((k, decoded))
+                        extras.append((decoded_key, decoded_val))
                 
                 if extras:
                     kwargs["extras"] = tuple(extras)

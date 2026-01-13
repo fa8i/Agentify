@@ -229,14 +229,15 @@ class ElasticsearchStore(ConversationStore):
                 if "=" not in part:
                     continue
                 key, val = part.split("=", 1)
-                decoded = unquote(val)
-                if key == "v": kwargs["api_version"] = decoded
-                elif key == "t": kwargs["tenant_id"] = decoded
-                elif key == "u": kwargs["user_id"] = decoded
-                elif key == "c": kwargs["conversation_id"] = decoded
-                elif key == "a": kwargs["agent_id"] = decoded
+                decoded_key = unquote(key)
+                decoded_val = unquote(val)
+                if decoded_key == "v": kwargs["api_version"] = decoded_val
+                elif decoded_key == "t": kwargs["tenant_id"] = decoded_val
+                elif decoded_key == "u": kwargs["user_id"] = decoded_val
+                elif decoded_key == "c": kwargs["conversation_id"] = decoded_val
+                elif decoded_key == "a": kwargs["agent_id"] = decoded_val
                 else:
-                    extras.append((key, decoded))
+                    extras.append((decoded_key, decoded_val))
             
             if extras:
                 kwargs["extras"] = tuple(extras)
