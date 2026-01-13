@@ -27,12 +27,13 @@ class MemoryService:
         store: ConversationStore,
         policy: Optional[MemoryPolicy] = None,
         log_enabled: bool = True,
-        max_log_length: Optional[int] = None,
+        max_log_length: Optional[int] = 5000,
     ) -> None:
         self.store = store
         self.policy = policy or MemoryPolicy(store)
         self.log_enabled = log_enabled
-        self.max_log_length = max_log_length # max length preview of the log
+        self.max_log_length = max_log_length  # max length preview of the log
+        self.redact_keys = {"password", "api_key", "token", "secret", "key", "authorization"}
 
     def _normalize_message(self, message: Dict[str, Any]) -> Message:
         """Accept OpenAI-shaped dicts; move unknown keys (e.g., 'tool_calls') into metadata.
@@ -52,6 +53,26 @@ class MemoryService:
 
         base["metadata"] = meta
         return Message(**base)
+
+    def _mask_secrets(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            masked: Dict[str, Any] = {}
+            for k, v in value.items():
+                if k.lower() in self.redact_keys:
+                    masked[k] = "******"
+                else:
+                    masked[k] = self._mask_secrets(v)
+            return masked
+        if isinstance(value, list):
+            return [self._mask_secrets(item) for item in value]
+        return value
+
+    def _preview_content(self, content: Any) -> Any:
+        redacted = self._mask_secrets(content)
+        if isinstance(redacted, str) and self.max_log_length is not None:
+            if len(redacted) > self.max_log_length:
+                return redacted[: self.max_log_length] + "..."
+        return redacted
 
     def append_history(self, addr: MemoryAddress, message: Dict[str, Any]) -> None:
         """Append a dict message (OpenAI-ish) to the given address, normalizing extras."""
@@ -85,20 +106,14 @@ class MemoryService:
                     f"{Colors.GRAY}{agent_tag}{Colors.RESET}{Colors.GRAY}[Reasoning]{Colors.RESET} {Colors.GRAY}{reasoning_preview}{Colors.RESET}"
                 )
 
-            if self.max_log_length is None:
-                content_preview = msg.content
-            else:
-                content_preview = (
-                    (msg.content[: self.max_log_length] + "...")
-                    if msg.content and len(msg.content) > self.max_log_length
-                    else msg.content
-                )
+            content_preview = self._preview_content(msg.content)
 
             tool_info = ""
             if msg.metadata and "tool_calls" in msg.metadata:
+                tool_calls = self._mask_secrets(msg.metadata["tool_calls"])
                 tool_names = [
                     tc.get("function", {}).get("name", "unknown")
-                    for tc in msg.metadata["tool_calls"]
+                    for tc in tool_calls
                 ]
                 tool_info = (
                     f"{Colors.MAGENTA} | tools: {', '.join(tool_names)}{Colors.RESET}"
