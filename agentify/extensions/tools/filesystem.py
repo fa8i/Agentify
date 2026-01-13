@@ -2,6 +2,9 @@ import os
 from typing import Any, Dict, List, Optional
 from agentify.core.tool import Tool
 
+DEFAULT_MAX_READ_BYTES = 1024 * 1024
+HARD_MAX_READ_BYTES = 5 * 1024 * 1024
+
 class BaseFilesystemTool(Tool):
     """Base class for filesystem tools with sandbox security."""
     
@@ -76,21 +79,38 @@ class ReadFileTool(BaseFilesystemTool):
                     "file_path": {
                         "type": "string",
                         "description": "Path to the file to read.",
-                    }
+                    },
+                    "max_bytes": {
+                        "type": "integer",
+                        "description": "Maximum bytes to read from the file (hard-capped).",
+                    },
                 },
                 "required": ["file_path"],
             },
         }
         super().__init__(schema, self._read_file, sandbox_dir)
 
-    def _read_file(self, file_path: str) -> str:
+    def _read_file(self, file_path: str, max_bytes: Optional[int] = None) -> str:
         try:
             target_path = self._validate_path(file_path)
             if not os.path.exists(target_path):
                 return f"Error: File '{file_path}' does not exist."
-            
-            with open(target_path, "r", encoding="utf-8") as f:
-                return f.read()
+
+            if max_bytes is not None and max_bytes <= 0:
+                return "Error: 'max_bytes' must be a positive integer."
+
+            read_limit = min(max_bytes or DEFAULT_MAX_READ_BYTES, HARD_MAX_READ_BYTES)
+
+            with open(target_path, "rb") as f:
+                content = f.read(read_limit + 1)
+
+            truncated = len(content) > read_limit
+            text = content[:read_limit].decode("utf-8", errors="replace")
+
+            if truncated:
+                return f"{text}\n[Truncated to {read_limit} bytes]"
+
+            return text
         except Exception as e:
             return f"Error reading file: {str(e)}"
 

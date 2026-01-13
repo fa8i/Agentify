@@ -48,6 +48,19 @@ class TestFilesystemTools:
             with open(os.path.join(tmpdir, "output.txt"), "r") as f:
                 assert f.read() == "Test content"
 
+    def test_read_file_tool_truncation(self):
+        """Test ReadFileTool enforces max_bytes limit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = os.path.join(tmpdir, "big.txt")
+            with open(test_file, "w") as f:
+                f.write("A" * 50)
+
+            tool = ReadFileTool(sandbox_dir=tmpdir)
+            result = tool._read_file("big.txt", max_bytes=10)
+
+            assert result.startswith("A" * 10)
+            assert "[Truncated to 10 bytes]" in result
+ 
     def test_sandbox_security(self):
         """Test that sandbox prevents access outside its boundaries."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -56,6 +69,7 @@ class TestFilesystemTools:
             # Try to read outside sandbox
             result = tool._read_file("../../etc/passwd")
             assert "Access denied" in result or "Error" in result
+
 
 
 if __name__ == "__main__":
