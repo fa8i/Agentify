@@ -139,7 +139,7 @@ policy = MemoryPolicy(
 
 ## Tools
 
-Tools extend agent capabilities.
+Tools extend agent capabilities. Tool arguments are validated against their JSON schema before execution.
 
 ### Built-in Tools
 

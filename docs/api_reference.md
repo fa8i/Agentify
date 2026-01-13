@@ -117,6 +117,7 @@ class Tool:
     
     def __call__(self, **kwargs) -> Any
 ```
+Tool arguments are validated against the JSON schema before execution.
 
 ## Memory
 
@@ -169,7 +170,7 @@ class MemoryAddress:
 **Methods:**
 
 #### `key_str(prefix="mem")`
-Generate storage key. Values are URL-encoded for safe storage.
+Generate storage key. Keys and values are URL-encoded for safe storage.
 
 **Returns:** `str`
 
