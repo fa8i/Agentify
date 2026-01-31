@@ -5,6 +5,7 @@ from agentify.memory.interfaces import (
     TokenCounter,
 )
 from agentify.memory.service import MemoryService
+from agentify.memory.async_service import AsyncMemoryService
 from agentify.memory.policies import MemoryPolicy
 
 __all__ = [
@@ -13,5 +14,7 @@ __all__ = [
     "ConversationStore",
     "TokenCounter",
     "MemoryService",
+    "AsyncMemoryService",
     "MemoryPolicy",
 ]
+
