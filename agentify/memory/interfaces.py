@@ -3,7 +3,17 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 from datetime import datetime, timezone
 import uuid
-from urllib.parse import quote
+from urllib.parse import quote, unquote
+
+
+# Mapping from short key codes to field names (used in key_str and from_key_str)
+_ADDR_FIELD_MAP: Dict[str, str] = {
+    "v": "api_version",
+    "t": "tenant_id",
+    "u": "user_id",
+    "c": "conversation_id",
+    "a": "agent_id",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +29,49 @@ class MemoryAddress:
     conversation_id: Optional[str] = None
     agent_id: Optional[str] = None
     extras: Tuple[Tuple[str, str], ...] = ()  # extras lets pass stable routing dimensions if needed.
+
+    @classmethod
+    def from_key_str(cls, key_str: str, prefix: str = "mem") -> "MemoryAddress":
+        """Parse a key string back to MemoryAddress.
+        
+        Inverse of key_str(). Used by stores to reconstruct MemoryAddress
+        from stored keys without duplicating parsing logic.
+        
+        Args:
+            key_str: The key string to parse (e.g., "mem:u=user1:c=conv1")
+            prefix: The prefix used when generating the key (default: "mem")
+            
+        Returns:
+            A MemoryAddress instance with the parsed fields.
+        """
+        core = key_str
+        prefix_with_colon = f"{prefix}:"
+        if core.startswith(prefix_with_colon):
+            core = core[len(prefix_with_colon):]
+        elif core == prefix:
+            # Handle case where key_str is just the prefix (empty address)
+            return cls()
+
+        parts = core.split(":")
+        kwargs: Dict[str, Any] = {}
+        extras: List[Tuple[str, str]] = []
+
+        for part in parts:
+            if "=" not in part:
+                continue
+            k, v = part.split("=", 1)
+            decoded_key = unquote(k)
+            decoded_val = unquote(v)
+
+            if decoded_key in _ADDR_FIELD_MAP:
+                kwargs[_ADDR_FIELD_MAP[decoded_key]] = decoded_val
+            else:
+                extras.append((decoded_key, decoded_val))
+
+        if extras:
+            kwargs["extras"] = tuple(extras)
+
+        return cls(**kwargs)
 
     def as_tuple(self) -> Tuple:
         """Stable, hashable representation for keys and indexing."""
