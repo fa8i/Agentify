@@ -247,7 +247,7 @@ class BaseAgent(Runnable):
             a, {"role": "system", "content": self.config.system_prompt}
         )
 
-    # --- Async memory helpers (for arun/async loop) ---
+    # Async memory helpers (for arun/async loop)
     
     async def _aensure_system_initialized(self, addr: MemoryAddress) -> None:
         """Async version: ensure system message is present (non-blocking)."""
