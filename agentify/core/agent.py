@@ -18,6 +18,7 @@ from jsonschema import validate, ValidationError
 from agentify.core.tool import Tool
 from agentify.llm.client import LLMClientFactory, LLMClientType, AsyncLLMClientType
 from agentify.memory.service import MemoryService
+from agentify.memory.async_service import AsyncMemoryService
 from agentify.memory.interfaces import MemoryAddress
 from agentify.core.config import AgentConfig, ImageConfig
 from agentify.core.callbacks import LoggingCallbackHandler
@@ -119,6 +120,9 @@ class BaseAgent(Runnable):
         )
         # Async client is created lazily on first arun() call
         self._async_client: Optional[AsyncLLMClientType] = None
+        
+        # Auto-wrap memory for async operations (transparent to user)
+        self._async_memory = AsyncMemoryService.from_sync(memory)
 
     @property
     def tool_defs(self) -> List[Dict[str, Any]]:
@@ -242,6 +246,32 @@ class BaseAgent(Runnable):
         self.memory.reset_history(
             a, {"role": "system", "content": self.config.system_prompt}
         )
+
+    # Async memory helpers (for arun/async loop)
+    
+    async def _aensure_system_initialized(self, addr: MemoryAddress) -> None:
+        """Async version: ensure system message is present (non-blocking)."""
+        history = await self._async_memory.get_history(addr)
+        if not history or history[0].get("role") != "system":
+            await self._async_memory.append_history(
+                addr, {"role": "system", "content": self.config.system_prompt}
+            )
+
+    async def _aadd(
+        self,
+        role: str,
+        content: Optional[Union[str, List[Dict[str, Any]]]] = None,
+        *,
+        addr: Optional[MemoryAddress] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Async version: append a message to memory (non-blocking)."""
+        a = self._addr_or_raise(addr)
+        msg: Dict[str, Any] = {"role": role}
+        if content is not None:
+            msg["content"] = content
+        msg.update(kwargs)
+        await self._async_memory.append_history(a, msg)
 
     def save_history(self, path: str, *, addr: Optional[MemoryAddress] = None) -> None:
         """Persist current history to a local JSON file."""
@@ -812,9 +842,13 @@ class BaseAgent(Runnable):
         """Perform the async LLM call with retries and error handling."""
         async_client = self._get_async_client()
         tool_choice_param = "auto" if self._tools else None
+        
+        # Use async memory to avoid blocking the event loop
+        messages = await self._async_memory.get_history(addr)
+        
         common_params: Dict[str, Any] = {
             "model": self.config.model_name,
-            "messages": self.memory.get_history(addr),
+            "messages": messages,
             "temperature": self.config.temperature,
         }
 
@@ -998,7 +1032,7 @@ class BaseAgent(Runnable):
         image_detail_override: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Async version of the agent loop with parallel tool execution."""
-        self._ensure_system_initialized(addr)
+        await self._aensure_system_initialized(addr)
 
         for cb in self.callbacks:
             cb.on_agent_start(self.config.name, user_input)
@@ -1012,7 +1046,7 @@ class BaseAgent(Runnable):
             image_detail_override=image_detail_override,
         )
         if user_content is not None:
-            self.add(role="user", content=user_content, addr=addr)
+            await self._aadd(role="user", content=user_content, addr=addr)
 
         accumulated_response: List[str] = []
 
@@ -1056,7 +1090,7 @@ class BaseAgent(Runnable):
                 if full_reasoning_content:
                     msg_kwargs["metadata"] = {"reasoning_content": full_reasoning_content}
                 
-                self.add(role="assistant", content=full_turn_content, addr=addr, **msg_kwargs)
+                await self._aadd(role="assistant", content=full_turn_content, addr=addr, **msg_kwargs)
                 for cb in self.callbacks:
                     cb.on_agent_finish(self.config.name, full_turn_content)
                 break
@@ -1069,7 +1103,7 @@ class BaseAgent(Runnable):
             if full_reasoning_content:
                 assistant_msg["metadata"] = {"reasoning_content": full_reasoning_content}
             
-            self.add(addr=addr, **assistant_msg)
+            await self._aadd(addr=addr, **assistant_msg)
 
             # Execute tools IN PARALLEL using asyncio.gather
             async def execute_single_tool(tc: Dict[str, Any]) -> tuple[str, str, str]:
@@ -1095,7 +1129,7 @@ class BaseAgent(Runnable):
 
             # Add tool results to memory
             for tool_call_id, tool_name, result_content in tool_results:
-                self.add(
+                await self._aadd(
                     role="tool",
                     content=result_content,
                     tool_call_id=tool_call_id,

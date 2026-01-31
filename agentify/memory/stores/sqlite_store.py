@@ -2,8 +2,7 @@ from __future__ import annotations
 import sqlite3
 import json
 import logging
-from typing import List, Tuple, Any
-from urllib.parse import unquote
+from typing import List, Any
 from ..interfaces import ConversationStore, MemoryAddress, Message
 
 logger = logging.getLogger(__name__)
@@ -157,43 +156,11 @@ class SQLiteStore(ConversationStore):
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
-            # Select DISTINCT address_key to find unique conversations
             cursor.execute(
                 "SELECT DISTINCT address_key FROM messages ORDER BY address_key LIMIT ? OFFSET ?",
                 (limit, offset)
             )
             rows = cursor.fetchall()
-            
-            result = []
-            for row in rows:
-                key_str = row[0]
-                
-                core = key_str
-                if core.startswith("mem:"):
-                    core = core[4:]
-                
-                parts = core.split(":")
-                kwargs = {}
-                extras = []
-                for part in parts:
-                    if "=" not in part:
-                        continue
-                    k, v = part.split("=", 1)
-                    decoded_key = unquote(k)
-                    decoded_val = unquote(v)
-                    if decoded_key == "v": kwargs["api_version"] = decoded_val
-                    elif decoded_key == "t": kwargs["tenant_id"] = decoded_val
-                    elif decoded_key == "u": kwargs["user_id"] = decoded_val
-                    elif decoded_key == "c": kwargs["conversation_id"] = decoded_val
-                    elif decoded_key == "a": kwargs["agent_id"] = decoded_val
-                    else:
-                        extras.append((decoded_key, decoded_val))
-                
-                if extras:
-                    kwargs["extras"] = tuple(extras)
-                    
-                result.append(MemoryAddress(**kwargs))
-            
-            return result
+            return [MemoryAddress.from_key_str(row[0]) for row in rows]
         finally:
             conn.close()

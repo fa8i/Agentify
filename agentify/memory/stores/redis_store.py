@@ -1,7 +1,6 @@
 from __future__ import annotations
 import json
 from typing import List
-from urllib.parse import unquote
 
 try:
     import redis
@@ -60,40 +59,14 @@ class RedisStore(ConversationStore):
             keys.append(key)
         
         keys.sort()
-        
-        # Paginate
         slice_keys = keys[offset : offset + limit]
         
         results = []
         for k in slice_keys:
             if not k.endswith(":history"):
                 continue
-            core = k[:-8]
-            
-            if core.startswith(f"{self.prefix}:"):
-                core = core[len(self.prefix)+1:]
-            
-            parts = core.split(":")
-            kwargs = {}
-            extras = []
-            
-            for part in parts:
-                if "=" not in part:
-                    continue
-                key, val = part.split("=", 1)
-                decoded_key = unquote(key)
-                decoded_val = unquote(val)
-                if decoded_key == "v": kwargs["api_version"] = decoded_val
-                elif decoded_key == "t": kwargs["tenant_id"] = decoded_val
-                elif decoded_key == "u": kwargs["user_id"] = decoded_val
-                elif decoded_key == "c": kwargs["conversation_id"] = decoded_val
-                elif decoded_key == "a": kwargs["agent_id"] = decoded_val
-                else:
-                    extras.append((decoded_key, decoded_val))
-            
-            if extras:
-                kwargs["extras"] = tuple(extras)
-                
-            results.append(MemoryAddress(**kwargs))
+            # Remove the ":history" suffix before parsing
+            core_key = k[:-8]
+            results.append(MemoryAddress.from_key_str(core_key, prefix=self.prefix))
             
         return results

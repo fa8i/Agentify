@@ -3,7 +3,6 @@ import json
 import logging
 from typing import List, Optional, Any, Dict
 from datetime import datetime
-from urllib.parse import unquote
 
 try:
     from elasticsearch import Elasticsearch
@@ -212,35 +211,4 @@ class ElasticsearchStore(ConversationStore):
         # Apply offset/limit locally
         buckets_slice = buckets[offset : offset + limit]
         
-        results = []
-        for b in buckets_slice:
-            k = b["key"]
-            core = k
-            prefix_check = "mem:" 
-            if core.startswith(prefix_check):
-                core = core[len(prefix_check):]
-            
-            parts = core.split(":")
-            kwargs = {}
-            extras = []
-            
-            for part in parts:
-                if "=" not in part:
-                    continue
-                key, val = part.split("=", 1)
-                decoded_key = unquote(key)
-                decoded_val = unquote(val)
-                if decoded_key == "v": kwargs["api_version"] = decoded_val
-                elif decoded_key == "t": kwargs["tenant_id"] = decoded_val
-                elif decoded_key == "u": kwargs["user_id"] = decoded_val
-                elif decoded_key == "c": kwargs["conversation_id"] = decoded_val
-                elif decoded_key == "a": kwargs["agent_id"] = decoded_val
-                else:
-                    extras.append((decoded_key, decoded_val))
-            
-            if extras:
-                kwargs["extras"] = tuple(extras)
-                
-            results.append(MemoryAddress(**kwargs))
-            
-        return results
+        return [MemoryAddress.from_key_str(b["key"]) for b in buckets_slice]
