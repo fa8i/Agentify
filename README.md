@@ -1,39 +1,54 @@
+<div align="center">
+
 # Agentify
 
-[![PyPI version](https://img.shields.io/pypi/v/agentify-core?color=orange)](https://pypi.org/project/agentify-core/)
-[![Downloads](https://img.shields.io/pepy/dt/agentify-core)](https://pepy.tech/project/agentify-core)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/agentify-core)](https://pypi.org/project/agentify-core/)
+[![PyPI version](https://img.shields.io/pypi/v/agentify-core?color=orange&style=for-the-badge)](https://pypi.org/project/agentify-core/)
+[![Downloads](https://img.shields.io/pepy/dt/agentify-core?style=for-the-badge)](https://pepy.tech/project/agentify-core)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![Python Version](https://img.shields.io/pypi/pyversions/agentify-core?style=for-the-badge)](https://pypi.org/project/agentify-core/)
 
-**Independent AI agent library based on the OpenAI SDK**
+<h3>Independent AI Agent Library based on the OpenAI SDK</h3>
 
-Agentify is a Python library for building AI agents and multi-agent systems. Built on the OpenAI-compatible Chat Completions interface, it supports multiple providers (OpenAI, Azure, DeepSeek, Gemini, Claude) with clear abstractions for memory, tools, and orchestration—no heavy framework lock-in.
+<p>
+Agentify is a lightweight, clean, and powerful Python library for building AI agents and multi-agent systems. 
+It provides simple abstractions for memory, tools, and orchestration without the heavy framework lock-in.
+</p>
 
+[Getting Started](docs/getting_started.md) • [Documentation](docs/api_reference.md) • [Examples](examples/)
+
+</div>
+
+---
 
 ## Key Features
 
-- **Multi-agent orchestration**: Teams, pipelines, hierarchies, and dynamic sub-agent spawning
-- **Memory service**: Pluggable backends (in-memory, SQLite, Redis, Elasticsearch) with policies (TTL, limits, token budgets)
-- **Tools**: `@tool` decorator for auto-schema generation, or custom tool classes. Built-in file I/O, planning, weather, and more
-- **MCP Integration**: Easy connection to MCP servers via StdIO (local) or SSE/HTTP (remote) to use external tools
-- **Reasoning models**: Configure thinking depth, store chain-of-thought, real-time reasoning logs
-- **Async & parallel**: `arun()` support with automatic parallel tool and agent execution
-- **Observability**: Callback system for monitoring and debugging
-- **Advanced capabilities**: Dynamic workflows, file/directory operations, complex state management
-
+| Feature | Description |
+| :--- | :--- |
+| **Multi-Agent Orchestration** | Teams, sequential pipelines, hierarchical structures, and dynamic sub-agent spawning. |
+| **Memory Service** | Pluggable backends (In-Memory, SQLite, Redis, Elasticsearch) with configurable TTL, limits and token budgets. |
+| **Tools & MCP** | Easy `@tool` decorator, custom classes, and full **Model Context Protocol (MCP)** integration. |
+| **Async & Parallel** | Native `arun()` support for high-performance concurrent agent execution. |
+| **Observability** | Comprehensive callback system for monitoring, debugging, and tracing agent thoughts. |
+| **Reasoning & Planning** | Configure thinking depth, chain-of-thought storage, and real-time reasoning logs. |
 
 ## Installation
+
+Install the core package:
 
 ```bash
 pip install agentify-core
 ```
 
-For optional features:
+For all optional features (Redis, vector stores, etc.):
+
 ```bash
-pip install agentify-core[all]  # Installs all optional dependencies
+pip install agentify-core[all]
 ```
 
-### Quick Start
+## Quick Start
+
+Here is how to create a simple agent with memory and tools:
+
 ```python
 # Note: Agentify does not auto-load .env. Load it manually if needed.
 # from dotenv import load_dotenv; load_dotenv()
@@ -41,71 +56,62 @@ pip install agentify-core[all]  # Installs all optional dependencies
 from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress, tool
 from agentify.memory.stores import InMemoryStore
 
-# 1. Create a simple tool with @tool decorator
+# 1. Define a tool
 @tool
 def get_time() -> dict:
-    """Returns the current time."""
+    """Returns the current local time."""
     from datetime import datetime
     return {"time": datetime.now().strftime("%H:%M:%S")}
 
-# 2. Create memory service
-memory = MemoryService(store=InMemoryStore(), log_enabled=True, max_log_length=100)
+# 2. Initialize Memory
+memory = MemoryService(store=InMemoryStore())
 addr = MemoryAddress(conversation_id="session_1")
 
-# 3. Create an Agent with the tool
+# 3. Create the Agent
 agent = BaseAgent(
     config=AgentConfig(
         name="ReasoningAgent",
         system_prompt="You are a helpful assistant.",
         provider="provider",
         model_name="model",
-        reasoning_effort="high",  # optional param:"low", "medium", "high"
+        reasoning_effort="low",  # optional param:"low", "medium", "high"
         model_kwargs={"max_completion_tokens": 5000}, # Pass model-specific params
         verbose=True, # Controls logging (True by default)
     ),
     memory=memory,
     memory_address=addr,
-    tools=[get_time]  # Add your tools here
+    tools=[get_time]
 )
 
-# 4. Run a conversation
+# 4. Run it
 response = agent.run(user_input="What time is it?")
 ```
 
-## Composable Flows
-
-Agentify provides powerful primitives that can be combined to build arbitrarily complex systems:
-
-* **BaseAgent**: The fundamental unit of work.
-* **Teams**: A group of agents managed by a supervisor.
-* **Pipelines**: A sequence of steps where output passes from one to the next.
-* **Hierarchies**: Tree structures for massive delegation.
-
-Because all flows share the same `run()` interface, you can build Teams made of Pipelines, Pipelines made of Teams, and deeply nested Hierarchies.
-
-Agentify supports both **strict workflows** (fixed, pre-defined Pipelines and Hierarchies) and **dynamic agentic flows**, where a supervisor/router agent decides at runtime which agent, Team or Pipeline to call next.
-
-
 ## Documentation
 
-- [Getting Started](docs/getting_started.md) - Installation and first steps
-- [Core Concepts](docs/core_concepts.md) - Agents, memory, and tools
-- [Multi-Agent Systems](docs/multi_agent.md) - Teams, pipelines, and hierarchies
-- [Advanced Features](docs/advanced.md) - Vision, streaming, hooks, and more
-- [API Reference](docs/api_reference.md) - Complete API documentation
+Detailed guides and API references are available in the `docs/` directory:
 
+- **[Getting Started](docs/getting_started.md)**: Installation and first steps.
+- **[Core Concepts](docs/core_concepts.md)**: Deep dive into Agents, Memory, and Tools.
+- **[Multi-Agent Systems](docs/multi_agent.md)**: Building Teams, Pipelines, and Hierarchies.
+- **[Advanced Features](docs/advanced.md)**: Vision, Screening, Hooks, and more.
 
-### More Examples
+## Examples
 
-Check out the [examples](examples/) directory for detailed implementations:
+Explore the `examples/` directory for production-ready implementations:
 
-*   [Single Agent Chatbot](examples/chatbot/)
-*   [Multi-Agent Teams](examples/multi_agent/team/)
-*   [Sequential Pipelines](examples/multi_agent/pipeline/)
-*   [Hierarchical Structures](examples/multi_agent/hierarchical/)
+- **[Chatbot](examples/chatbot/)**: A simple conversational agent.
+- **[Multi-Agent Team](examples/multi_agent/team/)**: Agents working together.
+- **[Pipelines](examples/multi_agent/pipeline/)**: Sequential task processing.
+- **[Hierarchies](examples/multi_agent/hierarchical/)**: Complex delegated decision making.
 
+## License
 
-## Author
+This project is licensed under the [MIT License](https://opensource.org/licenses/MIT).
 
-- **Fabian Melchor** [fabianmp_98@hotmail.com](mailto:fabianmp_98@hotmail.com)
+---
 
+<div align="center">
+Created by <b>Fabian Melchor</b><br>
+<a href="mailto:fabianmp_98@hotmail.com">fabianmp_98@hotmail.com</a>
+</div>
