@@ -1,6 +1,7 @@
-from typing import Dict, List, Union, Generator, AsyncGenerator, Any, Optional
+from typing import Dict, List, Union, AsyncGenerator, Any, Optional, Generator
 from agentify.core.runnable import Runnable
 from agentify.core.agent import BaseAgent
+from agentify.core.sync_bridge import run_coro_blocking, stream_async_to_sync
 from agentify.memory.interfaces import MemoryAddress
 from agentify.multi_agent.tool_wrapper import AgentTool, FlowTool, Flow
 
@@ -34,6 +35,40 @@ class HierarchicalTeam(Runnable):
         context: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[str, Generator[str, None, None]]:
+        """Synchronous wrapper around arun()."""
+        if self.root.config.stream:
+            return stream_async_to_sync(
+                lambda: self.arun(
+                    user_input=user_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    context=context,
+                    **kwargs,
+                ),
+                api_name="run",
+                async_api_name="arun",
+            )
+
+        return run_coro_blocking(
+            self.arun(
+                user_input=user_input,
+                session_id=session_id,
+                user_id=user_id,
+                context=context,
+                **kwargs,
+            ),
+            api_name="run",
+            async_api_name="arun",
+        )
+
+    async def arun(
+        self,
+        user_input: str,
+        session_id: str = "default_session",
+        user_id: str = "default_user",
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Union[str, AsyncGenerator[str, None]]:
         """Run the hierarchical flow."""
 
         # 1. Setup Root Address
@@ -47,29 +82,6 @@ class HierarchicalTeam(Runnable):
         self._register_hierarchy_tools(session_id, user_id)
 
         # 3. Run Root
-        return self.root.run(user_input=user_input, addr=root_addr)
-
-    async def arun(
-        self,
-        user_input: str,
-        session_id: str = "default_session",
-        user_id: str = "default_user",
-        context: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> Union[str, AsyncGenerator[str, None]]:
-        """Async version of run(). Uses root agent's arun() for async execution."""
-
-        # 1. Setup Root Address
-        root_addr = MemoryAddress(
-            user_id=user_id,
-            conversation_id=session_id,
-            agent_id=self.root.config.name,
-        )
-
-        # 2. Register hierarchy tools for this session
-        self._register_hierarchy_tools(session_id, user_id)
-
-        # 3. Run Root asynchronously
         return await self.root.arun(user_input=user_input, addr=root_addr)
 
     def _register_hierarchy_tools(self, session_id: str, user_id: str) -> None:
@@ -105,4 +117,3 @@ class HierarchicalTeam(Runnable):
 
                 # Register with parent
                 parent.register_tool(tool_wrapper)
-

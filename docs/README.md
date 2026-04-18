@@ -9,6 +9,7 @@ Complete documentation for the Agentify AI agent library.
 - [Multi-Agent Systems](multi_agent.md) - Teams, pipelines, and hierarchies
 - [Advanced Features](advanced.md) - Vision, streaming, hooks, and more
 - [📖 API Reference](api_reference.md) - Complete API documentation
+- [Personal Assistant MVP](personal_assistant_mvp/README.md) - Linux app execution plan
 
 ## Documentation Structure
 
@@ -110,9 +111,8 @@ response = agent.run("Hello!")
 from agentify.multi_agent import Team
 
 team = Team(
+    agents=[manager_agent, worker1, worker2],
     supervisor=manager_agent,
-    workers=[worker1, worker2],
-    session_id="team_session"
 )
 
 result = team.run("Complete this task")

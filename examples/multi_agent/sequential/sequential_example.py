@@ -1,13 +1,16 @@
 import os
 import sys
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.multi_agent import Pipeline
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def main():
     # 1. Setup Memory

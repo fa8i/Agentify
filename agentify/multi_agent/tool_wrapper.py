@@ -1,9 +1,15 @@
-from typing import Any, Dict, Optional
-import asyncio
+from typing import Any, Dict, Optional, Protocol, Union, AsyncGenerator, Generator
 import hashlib
+import asyncio
+import logging
+import uuid
+import time
 from agentify.core.agent import BaseAgent
 from agentify.core.tool import Tool
 from agentify.memory.interfaces import MemoryAddress
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentTool(Tool):
@@ -50,36 +56,150 @@ class AgentTool(Tool):
         # Store async func for detection by BaseAgent
         self.async_func = self._arun_agent
 
-    def _run_agent(self, instructions: str) -> Dict[str, Any]:
-        """The actual function that runs when the tool is called synchronously."""
+    @staticmethod
+    def _is_tool_call_consistency_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            "tool_calls" in msg
+            and "tool messages" in msg
+            and "tool_call_id" in msg
+        )
 
-        # Create unique address for child, linked to parent's session
-        child_addr = MemoryAddress(
+    def _build_child_addr(self) -> MemoryAddress:
+        return MemoryAddress(
             user_id=self.parent_addr.user_id,
             conversation_id=self.parent_addr.conversation_id,
             agent_id=self.agent.config.name,
         )
 
-        # Run the agent
-        response = self.agent.run(user_input=instructions, addr=child_addr)
+    def _build_recovery_addr(self, instructions: str) -> MemoryAddress:
+        digest = hashlib.sha256(instructions.encode("utf-8")).hexdigest()[:10]
+        recovery_suffix = uuid.uuid4().hex[:8]
+        return MemoryAddress(
+            user_id=self.parent_addr.user_id,
+            conversation_id=(
+                f"{self.parent_addr.conversation_id}"
+                f"__rcv__{self.agent.config.name}__{digest}__{recovery_suffix}"
+            ),
+            agent_id=self.agent.config.name,
+        )
 
-        # Consume generator if needed
+    def _should_use_isolated_recovery(self, exc: Exception) -> bool:
+        cfg = self.agent.config
+        return (
+            cfg.delegation_recovery_enabled
+            and cfg.delegation_recovery_mode == "retry_isolated"
+            and self._is_tool_call_consistency_error(exc)
+        )
+
+    def _run_with_recovery(self, instructions: str) -> Union[str, Dict[str, Any]]:
+        base_addr = self._build_child_addr()
+
+        try:
+            return self.agent.run(user_input=instructions, addr=base_addr)
+        except Exception as exc:
+            if not self._should_use_isolated_recovery(exc):
+                logger.error(
+                    "Delegated sync execution failed for '%s' without recovery: %s",
+                    self.agent.config.name,
+                    exc,
+                    exc_info=True,
+                )
+                return {
+                    "error": "Delegated task failed. Please try again."
+                }
+
+            logger.debug(
+                "Delegated sync execution consistency error for '%s'. "
+                "Applying isolated recovery retry.",
+                self.agent.config.name,
+            )
+
+            retries = max(1, self.agent.config.delegation_max_retries)
+            for attempt in range(retries):
+                try:
+                    delay = (self.agent.config.delegation_retry_backoff_ms / 1000.0) * attempt
+                    if delay > 0:
+                        time.sleep(delay)
+                    recovery_addr = self._build_recovery_addr(instructions)
+                    return self.agent.run(user_input=instructions, addr=recovery_addr)
+                except Exception:
+                    if attempt == retries - 1:
+                        logger.error(
+                            "Delegated sync recovery failed for '%s' after %s retries.",
+                            self.agent.config.name,
+                            retries,
+                            exc_info=True,
+                        )
+                        break
+
+            return {
+                "error": "Delegated task failed after automatic recovery."
+            }
+
+    async def _arun_with_recovery(self, instructions: str) -> Union[str, Dict[str, Any], AsyncGenerator[str, None]]:
+        base_addr = self._build_child_addr()
+
+        try:
+            return await self.agent.arun(user_input=instructions, addr=base_addr)
+        except Exception as exc:
+            if not self._should_use_isolated_recovery(exc):
+                logger.error(
+                    "Delegated async execution failed for '%s' without recovery: %s",
+                    self.agent.config.name,
+                    exc,
+                    exc_info=True,
+                )
+                return {
+                    "error": "Delegated task failed. Please try again."
+                }
+
+            logger.debug(
+                "Delegated async execution consistency error for '%s'. "
+                "Applying isolated recovery retry.",
+                self.agent.config.name,
+            )
+
+            retries = max(1, self.agent.config.delegation_max_retries)
+            for attempt in range(retries):
+                try:
+                    delay = (self.agent.config.delegation_retry_backoff_ms / 1000.0) * attempt
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    recovery_addr = self._build_recovery_addr(instructions)
+                    return await self.agent.arun(user_input=instructions, addr=recovery_addr)
+                except Exception:
+                    if attempt == retries - 1:
+                        logger.error(
+                            "Delegated async recovery failed for '%s' after %s retries.",
+                            self.agent.config.name,
+                            retries,
+                            exc_info=True,
+                        )
+                        break
+
+            return {
+                "error": "Delegated task failed after automatic recovery."
+            }
+
+    def _run_agent(self, instructions: str) -> Dict[str, Any]:
+        """Runs the wrapped agent synchronously."""
+        response = self._run_with_recovery(instructions)
+
+        if isinstance(response, dict):
+            return response
+
         if hasattr(response, "__iter__") and not isinstance(response, str):
             response = "".join(list(response))
 
         return {"response": response}
 
     async def _arun_agent(self, instructions: str) -> Dict[str, Any]:
-        """Async version: runs the wrapped agent using arun()."""
+        """Runs the wrapped agent using arun()."""
+        response = await self._arun_with_recovery(instructions)
 
-        child_addr = MemoryAddress(
-            user_id=self.parent_addr.user_id,
-            conversation_id=self.parent_addr.conversation_id,
-            agent_id=self.agent.config.name,
-        )
-
-        # Run the agent asynchronously
-        response = await self.agent.arun(user_input=instructions, addr=child_addr)
+        if isinstance(response, dict):
+            return response
 
         # Consume async generator if needed
         if hasattr(response, "__aiter__"):
@@ -93,7 +213,7 @@ class AgentTool(Tool):
         return {"response": response}
 
 
-class Flow(Any):
+class Flow(Protocol):
     """Protocol for any multi-agent flow (Team, Pipeline, etc)."""
 
     def run(
@@ -101,14 +221,14 @@ class Flow(Any):
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
-    ) -> Any: ...
+    ) -> Union[str, Generator[str, None, None]]: ...
 
     async def arun(
         self,
         user_input: str,
         session_id: str = "default_session",
         user_id: str = "default_user",
-    ) -> Any: ...
+    ) -> Union[str, AsyncGenerator[str, None]]: ...
 
 
 class FlowTool(Tool):
@@ -145,36 +265,25 @@ class FlowTool(Tool):
 
     def _run_flow(self, instructions: str) -> Dict[str, Any]:
         """Runs the wrapped flow synchronously."""
-
-        # Maintain context continuity
         response = self.flow.run(
             user_input=instructions,
             session_id=self.parent_addr.conversation_id,
             user_id=self.parent_addr.user_id,
         )
 
-        # Consume generator if needed
         if hasattr(response, "__iter__") and not isinstance(response, str):
             response = "".join(list(response))
 
         return {"response": response}
 
     async def _arun_flow(self, instructions: str) -> Dict[str, Any]:
-        """Async version: runs the wrapped flow using arun() if available."""
+        """Runs the wrapped flow using arun()."""
 
-        if hasattr(self.flow, "arun"):
-            response = await self.flow.arun(
-                user_input=instructions,
-                session_id=self.parent_addr.conversation_id,
-                user_id=self.parent_addr.user_id,
-            )
-        else:
-            # Fallback to sync if no arun available
-            response = self.flow.run(
-                user_input=instructions,
-                session_id=self.parent_addr.conversation_id,
-                user_id=self.parent_addr.user_id,
-            )
+        response = await self.flow.arun(
+            user_input=instructions,
+            session_id=self.parent_addr.conversation_id,
+            user_id=self.parent_addr.user_id,
+        )
 
         # Consume async generator if needed
         if hasattr(response, "__aiter__"):
@@ -237,16 +346,13 @@ class SpawnAgentTool(Tool):
     ) -> Dict[str, Any]:
         """Creates and runs a new agent instance synchronously."""
         from agentify.core.agent import BaseAgent
-        from agentify.core.config import AgentConfig
         import copy
 
-        # Clone config but override name and system prompt
         new_config = copy.deepcopy(self.base_config)
         new_config.name = f"{self.base_config.name}.{role_name}"
         if system_prompt:
             new_config.system_prompt = system_prompt
-        
-        # Create a unique address for this interaction using hash of instructions
+
         instr_hash = hashlib.sha256(instructions.encode("utf-8")).hexdigest()[:16]
         child_addr = MemoryAddress(
             user_id=self.parent_addr.user_id,
@@ -254,24 +360,22 @@ class SpawnAgentTool(Tool):
             agent_id=new_config.name,
         )
 
-        # Create the agent
         sub_agent = BaseAgent(
             config=new_config,
             memory=self.memory_service,
             memory_address=child_addr,
-            client_factory=self.client_factory
+            client_factory=self.client_factory,
         )
 
         response = sub_agent.run(user_input=instructions)
-        
-        # Consume generator if needed
+
         if hasattr(response, "__iter__") and not isinstance(response, str):
             response = "".join(list(response))
 
         return {
             "subagent": role_name,
             "status": "finished",
-            "response": response
+            "response": response,
         }
 
     async def _aspawn_and_run(
@@ -282,7 +386,6 @@ class SpawnAgentTool(Tool):
     ) -> Dict[str, Any]:
         """Async version: creates and runs a new agent instance asynchronously."""
         from agentify.core.agent import BaseAgent
-        from agentify.core.config import AgentConfig
         import copy
 
         new_config = copy.deepcopy(self.base_config)
@@ -320,4 +423,3 @@ class SpawnAgentTool(Tool):
             "status": "finished",
             "response": response
         }
-

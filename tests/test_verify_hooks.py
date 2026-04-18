@@ -1,7 +1,8 @@
 import sys
 import os
+import asyncio
 from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 
 # Add the project root to the python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -25,6 +26,15 @@ class MockFactory(LLMClientFactory):
     def create_client(self, *args, **kwargs):
         return MockLLMClient()
 
+    def create_async_client(self, *args, **kwargs):
+        client = MockLLMClient()
+        client.chat.completions.create = AsyncMock(
+            return_value=MagicMock(
+                choices=[MagicMock(message=MagicMock(content="Hello from Mock LLM", tool_calls=None))]
+            )
+        )
+        return client
+
 # --- Hooks with different signatures ---
 
 def hook_simple(user_input):
@@ -42,7 +52,7 @@ def post_hook_response(response):
 def post_hook_full(agent, response):
     print(f"POST_HOOK_FULL: Agent='{agent.config.name}', Response='{response}'")
 
-def main():
+async def main():
     config = AgentConfig(
         name="SmartAgent",
         system_prompt="You are a smart agent.",
@@ -62,8 +72,8 @@ def main():
     )
 
     print("--- Starting Smart Agent Interaction ---")
-    response = agent.run("Hello smart agent!", addr=addr)
+    response = await agent.arun("Hello smart agent!", addr=addr)
     print(f"--- Interaction Finished. Final Response: {response} ---")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

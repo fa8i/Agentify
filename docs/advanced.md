@@ -72,7 +72,8 @@ agent = BaseAgent(
 )
 
 # Both text and tool calls work seamlessly
-for chunk in agent.run("Calculate 15 * 23 and explain the result"):
+response = agent.run("Calculate 15 * 23 and explain the result")
+for chunk in response:
     print(chunk, end="", flush=True)
 ```
 
@@ -134,7 +135,7 @@ agent = BaseAgent(
     memory=memory
 )
 
-response = agent.run("Solve this complex problem...")
+response = await agent.arun("Solve this complex problem...")
 ```
 
 ### Reasoning Callbacks

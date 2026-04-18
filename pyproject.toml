@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentify-core"
-version = "0.3.1"
+version = "0.4.0"
 description = "Framework-agnostic AI agent library for building single and multi-agent systems"
 readme = "README_PYPI.md"
 requires-python = ">=3.10"

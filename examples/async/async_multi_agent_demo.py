@@ -2,7 +2,7 @@
 Async Multi-Agent Demo
 
 This example demonstrates the async capabilities of Agentify:
-1. Basic async agent execution with arun()
+1. Basic async agent execution with run()
 2. Async Team orchestration
 3. Performance comparison between sync and async execution
 
@@ -240,7 +240,7 @@ async def main():
     print("AGENTIFY ASYNC CAPABILITIES DEMO")
     print("=" * 60)
     print("\nThis demo showcases the async features of the Agentify library.")
-    print("All executions use arun() instead of run() for non-blocking I/O.\n")
+    print("All executions use async run() for non-blocking I/O.\n")
     
     # Demo 1: Basic async
     await demo_basic_async_agent()

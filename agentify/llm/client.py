@@ -15,7 +15,7 @@ AsyncClientBuilder = Callable[[Dict[str, Any], int], AsyncLLMClientType]
 class LLMClientFactory:
     """Factory class to create LLM client instances for different providers."""
 
-    SUPPORTED_PROVIDERS = ["azure", "openai", "deepseek", "gemini", "anthropic"]
+    SUPPORTED_PROVIDERS = ["azure", "openai", "deepseek", "gemini", "anthropic", "local"]
 
     def __init__(self, default_timeout: int = 30):
         self.default_timeout = default_timeout
@@ -26,6 +26,7 @@ class LLMClientFactory:
             "azure": self._create_azure_client,
             "anthropic": self._create_anthropic_client,
             "llama": self._create_llama_client,
+            "local": self._create_local_client,
         }
         self._async_builders: Dict[str, AsyncClientBuilder] = {
             "openai": self._create_openai_client_async,
@@ -34,6 +35,7 @@ class LLMClientFactory:
             "azure": self._create_azure_client_async,
             "anthropic": self._create_anthropic_client_async,
             "llama": self._create_llama_client_async,
+            "local": self._create_local_client_async,
         }
 
     def _get_env_or_config(
@@ -79,6 +81,15 @@ class LLMClientFactory:
         api_key = self._get_env_or_config("api_key", "LLAMA_API_KEY", config)
         base_url = "https://api.llama.com/compat/v1/"
 
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+        )
+
+    def _create_local_client(self, config: Dict[str, Any], timeout: int) -> OpenAI:
+        api_key = config.get("api_key", os.getenv("LOCAL_API_KEY", "api_key"))
+        base_url = config.get("base_url", os.getenv("LOCAL_API_BASE", "http://localhost:1234/v1"))
         return OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -142,6 +153,15 @@ class LLMClientFactory:
     def _create_llama_client_async(self, config: Dict[str, Any], timeout: int) -> AsyncOpenAI:
         api_key = self._get_env_or_config("api_key", "LLAMA_API_KEY", config)
         base_url = "https://api.llama.com/compat/v1/"
+        return AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+        )
+
+    def _create_local_client_async(self, config: Dict[str, Any], timeout: int) -> AsyncOpenAI:
+        api_key = config.get("api_key", os.getenv("LOCAL_API_KEY", "api_key"))
+        base_url = config.get("base_url", os.getenv("LOCAL_API_BASE", "http://localhost:1234/v1"))
         return AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,

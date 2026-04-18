@@ -37,9 +37,14 @@ class BaseAgent:
 **Methods:**
 
 #### `run(user_input, *, addr=None, image_path=None, image_detail_override=None)`
-Execute the agent with user input.
+Execute the agent with user input (sync API).
 
 **Returns:** `str` or `Generator[str, None, None]` (if streaming)
+
+#### `arun(user_input, *, addr=None, image_path=None, image_detail_override=None)`
+Execute the agent with user input (async API).
+
+**Returns:** `str` or `AsyncGenerator[str, None]` (if streaming)
 
 #### `add(role, content=None, *, addr=None, **kwargs)`
 Add a message to memory.
@@ -86,11 +91,17 @@ class AgentConfig:
     system_prompt: str
     provider: str
     model_name: str
-    temperature: float = 0.7
-    timeout: int = 60
+    temperature: float = 1.0
+    timeout: int = 300
+    tool_timeout: int = 300
     stream: bool = False
     max_retries: int = 3
+    verbose: bool = True
     max_tool_iter: Optional[int] = 10
+    delegation_recovery_enabled: bool = True
+    delegation_recovery_mode: str = "retry_isolated"
+    delegation_max_retries: int = 1
+    delegation_retry_backoff_ms: int = 200
     reasoning_effort: Optional[str] = None
     model_kwargs: Optional[Dict[str, Any]] = None
     client_config_override: Optional[Dict[str, Any]] = None
@@ -245,6 +256,7 @@ Supported providers:
 - `"gemini"`
 - `"anthropic"`
 - `"llama"`
+- `"local"` (e.g., LM Studio, Ollama)
 
 
 ## Multi-Agent
@@ -268,7 +280,14 @@ class Team:
         user_input: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> str
+    ) -> Union[str, Generator[str, None, None]]
+
+    async def arun(
+        self,
+        user_input: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Union[str, AsyncGenerator[str, None]]
 ```
 
 ### SequentialPipeline
@@ -289,7 +308,14 @@ class SequentialPipeline:
         user_input: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> str
+    ) -> Union[str, Generator[str, None, None]]
+
+    async def arun(
+        self,
+        user_input: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Union[str, AsyncGenerator[str, None]]
 ```
 
 ### HierarchicalTeam
@@ -311,7 +337,14 @@ class HierarchicalTeam:
         user_input: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> str
+    ) -> Union[str, Generator[str, None, None]]
+
+    async def arun(
+        self,
+        user_input: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Union[str, AsyncGenerator[str, None]]
 ```
 
 ## Tools
@@ -431,4 +464,3 @@ class AgentCallbackHandler(Protocol):
     def on_tool_finish(self, tool_name: str, result: str)
     def on_error(self, error: Exception, context: str)
 ```
-

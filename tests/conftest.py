@@ -1,5 +1,17 @@
 import pytest
+import sys
+from unittest.mock import MagicMock
 from typing import List, Dict, Any
+
+# Mock optional runtime dependencies for test collection environments
+mock_openai = MagicMock()
+mock_openai.RateLimitError = Exception
+sys.modules.setdefault("openai", mock_openai)
+sys.modules.setdefault("openai.types.chat", MagicMock())
+sys.modules.setdefault("dotenv", MagicMock())
+sys.modules.setdefault("PIL", MagicMock())
+sys.modules.setdefault("PIL.Image", MagicMock())
+
 from agentify.memory.interfaces import MemoryAddress, Message, ConversationStore
 from agentify.memory.service import MemoryService
 from agentify.core.config import AgentConfig

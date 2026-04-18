@@ -28,6 +28,8 @@ OPENAI_API_KEY=your-key-here
 # DEEPSEEK_API_KEY=your-key-here
 # GEMINI_API_KEY=your-key-here
 # ANTHROPIC_API_KEY=your-key-here
+# LOCAL_API_BASE=http://localhost:1234/v1
+# LOCAL_API_KEY=api_key (dummy for local servers)
 ```
 
 ## Your First Agent
@@ -57,9 +59,12 @@ agent = BaseAgent(
     memory_address=addr
 )
 
-# 3. Chat
+# 3. Chat (sync)
 response = agent.run("Hello! Who are you?")
 print(response)
+
+# Async alternative:
+# response = await agent.arun("Hello! Who are you?")
 ```
 
 ## Streaming Responses
@@ -79,12 +84,17 @@ agent = BaseAgent(
     memory_address=addr
 )
 
-# Get a generator
+# Get a sync generator
 response = agent.run("Tell me a story")
 
-# Stream the response
+# Stream the response (sync)
 for chunk in response:
     print(chunk, end="", flush=True)
+
+# Async streaming alternative:
+# response = await agent.arun("Tell me a story")
+# async for chunk in response:
+#     print(chunk, end="", flush=True)
 ```
 
 ## Adding Tools
@@ -107,7 +117,7 @@ print(response)
 
 ## Async Execution (Parallelism)
 
-For high-performance applications, use `arun()` instead of `run()`. This allows:
+`arun()` enables non-blocking execution and parallel tool calls:
 1.  **Non-blocking execution:** Your server stays responsive while waiting for the LLM.
 2.  **Parallel Tool Calls:** If the agent needs multiple tools (e.g., getting weather for 3 cities), it executes them **simultaneously**, saving time.
 
@@ -117,7 +127,6 @@ import asyncio
 async def main():
     # ... setup agent as above ...
     
-    # Use 'await agent.arun()'
     response = await agent.arun("Get weather for Tokyo, London, and NY")
     print(response)
 

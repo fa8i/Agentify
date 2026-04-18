@@ -1,17 +1,15 @@
 from __future__ import annotations
 import asyncio
+import contextvars
 import json
 import logging
-import time
 import uuid
 import base64
-from io import BytesIO
 import inspect
-from typing import Any, Dict, Generator, List, Optional, Union, Iterator, Callable, AsyncGenerator
+from typing import Any, Dict, Generator, List, Optional, Union, Callable, AsyncGenerator
 
 from agentify.core.runnable import Runnable
 
-from PIL import Image
 from openai import RateLimitError
 from jsonschema import validate, ValidationError
 
@@ -22,68 +20,17 @@ from agentify.memory.async_service import AsyncMemoryService
 from agentify.memory.interfaces import MemoryAddress
 from agentify.core.config import AgentConfig, ImageConfig
 from agentify.core.callbacks import LoggingCallbackHandler
+from agentify.core.multimodal import build_user_content
+from agentify.core.sync_bridge import run_coro_blocking, stream_async_to_sync
 
 logger = logging.getLogger(__name__)
 
 
 class BaseAgent(Runnable):
-    """Core AI Agent class based on chat completions interface.
+    """Agent runtime with sync/async public API.
 
-    BaseAgent is the primary abstraction for building AI agents in Agentify. It provides
-    a unified interface for interacting with various LLM providers (OpenAI, Azure, DeepSeek,
-    Gemini, etc.) that implement the OpenAI SDK-compatible chat completions format.
-    
-    It implements the Runnable protocol, making it composable within pipelines and teams.
-
-
-    The agent orchestrates the interaction between users, LLMs, and registered tools, managing
-    conversation history, tool execution, and model responses. It supports both synchronous
-    and asynchronous execution patterns, with automatic parallel tool execution in async mode.
-
-    Attributes:
-        config (AgentConfig): Configuration object defining the agent's behavior, including
-            model selection, provider, temperature, retry policies, and streaming options.
-        memory (MemoryService): Service for managing conversation history. Abstracts the
-            underlying storage backend (InMemoryStore, RedisStore, etc.) and handles
-            memory policies like TTL and message limits.
-        memory_address (Optional[MemoryAddress]): Default conversation identifier (session_id,
-            user_id, agent_id). If provided during initialization, it can be omitted from
-            individual `run()` or `arun()` calls.
-        image_config (ImageConfig): Configuration for multimodal image processing, controlling
-            resolution, compression quality, and detail level for vision-capable models.
-        pre_hooks (List[Callable]): Functions executed before the agent loop starts. Hooks
-            receive arguments via dependency injection based on their signature. Available
-            arguments: `agent` (BaseAgent), `user_input` (str).
-        post_hooks (List[Callable]): Functions executed after the agent loop completes. Hooks
-            receive arguments via dependency injection. Available arguments: `agent` (BaseAgent),
-            `user_input` (str), `response` (str).
-        callbacks (List[AgentCallbackHandler]): Event handlers for observability. Receive
-            notifications for LLM calls, tool executions, errors, and reasoning steps.
-            Default: LoggingCallbackHandler if none provided.
-        client (LLMClientType): Synchronous LLM client (e.g., OpenAI, AzureOpenAI) initialized
-            during construction based on `config.provider`.
-
-    Notes:
-        Supports both synchronous (run) and asynchronous (arun) execution.
-        Use arun for non-blocking I/O and parallel tool execution.
-        
-        The async LLM client is created lazily on the first arun() call to avoid
-        unnecessary connections in sync-only usage.
-        
-        In async mode, when the LLM requests multiple independent tools in a single
-        turn, they are executed concurrently using asyncio.gather.
-        
-        Conversation history is isolated by MemoryAddress. Each unique combination
-        of (conversation_id, user_id, agent_id) maintains a separate history.
-        
-        Transient errors (timeouts, rate limits) are automatically retried with
-        exponential backoff. Only the final failure logs a full traceback.
-        
-        Tools can be created by subclassing Tool or using the @tool decorator for
-        automatic schema generation from function signatures.
-        
-        For multimodal models, pass image_path to run() or arun(). The image is
-        automatically encoded to base64 and resized according to image_config.
+    `arun()` is the source of truth for execution. `run()` bridges to it for
+    synchronous callers via `sync_bridge`.
     """
 
     def __init__(
@@ -113,16 +60,23 @@ class BaseAgent(Runnable):
         self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
 
         self._factory = client_factory or LLMClientFactory()
-        self.client: LLMClientType = self._factory.create_client(
-            provider=self.config.provider,
-            config_override=self.config.client_config_override,
-            timeout=self.config.timeout,
-        )
+        self._client: Optional[LLMClientType] = None
         # Async client is created lazily on first arun() call
         self._async_client: Optional[AsyncLLMClientType] = None
         
         # Auto-wrap memory for async operations (transparent to user)
         self._async_memory = AsyncMemoryService.from_sync(memory)
+
+    @property
+    def client(self) -> LLMClientType:
+        """Lazily create and return the sync client."""
+        if self._client is None:
+            self._client = self._factory.create_client(
+                provider=self.config.provider,
+                config_override=self.config.client_config_override,
+                timeout=self.config.timeout,
+            )
+        return self._client
 
     @property
     def tool_defs(self) -> List[Dict[str, Any]]:
@@ -136,32 +90,6 @@ class BaseAgent(Runnable):
         """Return the names of registered tools."""
         return list(self._tools.keys())
 
-    def _encode_image_to_base64(self, image_path: str) -> str:
-        """Opens an image, resizes it, compresses it, and returns it as base64."""
-        try:
-            with Image.open(image_path) as img_pil:
-                if img_pil.mode not in ("RGB", "L"):
-                    img_pil = img_pil.convert("RGB")
-
-                max_side = self.image_config.max_side_px
-                img_pil.thumbnail((max_side, max_side))
-
-                buf = BytesIO()
-                img_pil.save(
-                    buf,
-                    format="JPEG",
-                    quality=self.image_config.quality,
-                    optimize=True,
-                )
-                return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-        except FileNotFoundError:
-            logger.error(f"Image file not found: {image_path}")
-            raise
-        except Exception as e:
-            logger.error(f"Image processing error for {image_path}: {e}", exc_info=True)
-            raise
-
     def _build_user_content(
         self,
         user_input: str,
@@ -169,36 +97,13 @@ class BaseAgent(Runnable):
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
     ) -> Optional[Union[str, List[Dict[str, Any]]]]:
-        """Build the `content` field of the user message supporting:
-        - text only
-        - image only
-        - image + text (OpenAI-like multimodal list)
-        """
-        has_text = bool(user_input and user_input.strip())
-        has_image = bool(image_path)
-
-        if not has_text and not has_image:
-            return None
-
-        if not has_image:
-            return user_input
-
-        b64_image_data = self._encode_image_to_base64(image_path)  # type: ignore[arg-type]
-        detail_level = image_detail_override or self.image_config.detail
-
-        parts: List[Dict[str, Any]] = [
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{b64_image_data}",
-                    "detail": detail_level,
-                },
-            }
-        ]
-        if has_text:
-            parts.append({"type": "text", "text": user_input})
-
-        return parts
+        """Build user message content for text-only or multimodal inputs."""
+        return build_user_content(
+            user_input,
+            image_config=self.image_config,
+            image_path=image_path,
+            image_detail_override=image_detail_override,
+        )
 
     # Memory helpers
 
@@ -211,14 +116,6 @@ class BaseAgent(Runnable):
                 "or in each call (addr=...)."
             )
         return effective
-
-    def _ensure_system_initialized(self, addr: MemoryAddress) -> None:
-        """Ensure the system message is present exactly once at the beginning."""
-        history = self.memory.get_history(addr)
-        if not history or history[0].get("role") != "system":
-            self.memory.append_history(
-                addr, {"role": "system", "content": self.config.system_prompt}
-            )
 
     def get_history(self, addr: MemoryAddress) -> List[Dict[str, Any]]:
         """Return current conversation history for this address."""
@@ -247,7 +144,7 @@ class BaseAgent(Runnable):
             a, {"role": "system", "content": self.config.system_prompt}
         )
 
-    # Async memory helpers (for arun/async loop)
+    # Async memory helpers (for async loop)
     
     async def _aensure_system_initialized(self, addr: MemoryAddress) -> None:
         """Async version: ensure system message is present (non-blocking)."""
@@ -317,82 +214,6 @@ class BaseAgent(Runnable):
             logger.error(f"Error executing hook '{hook.__name__}': {e}", exc_info=True)
 
     # Core Logic
-
-    def _get_llm_response(
-        self, *, addr: MemoryAddress
-    ) -> Union[Any, Generator[Dict[str, Any], None, None]]:
-        """Perform the LLM call with retries and error handling."""
-        tool_choice_param = "auto" if self._tools else None
-        common_params: Dict[str, Any] = {
-            "model": self.config.model_name,
-            "messages": self.memory.get_history(addr),
-            "temperature": self.config.temperature,
-        }
-
-        if self.config.reasoning_effort:
-            common_params["reasoning_effort"] = self.config.reasoning_effort
-
-        if self.config.model_kwargs:
-            for k, v in self.config.model_kwargs.items():
-                if k not in common_params:
-                    common_params[k] = v
-
-        # Only add tools if they exist
-        tools_payload = self.tool_defs
-        if tools_payload:
-            common_params["tools"] = tools_payload
-            common_params["tool_choice"] = tool_choice_param
-
-        for cb in self.callbacks:
-            cb.on_llm_start(self.config.model_name, common_params["messages"])
-
-        for attempt in range(self.config.max_retries):
-            try:
-                if self.config.stream:
-                    return self.client.chat.completions.create(
-                        **common_params, stream=True
-                    )
-                response = self.client.chat.completions.create(
-                    **common_params, stream=False
-                )
-
-                for cb in self.callbacks:
-                    cb.on_llm_end(response)
-
-                if response.choices and len(response.choices) > 0:
-                    return response.choices[0].message
-                raise ValueError("API response did not contain valid 'choices'.")
-            except Exception as e:
-                # Unify error handling
-                for cb in self.callbacks:
-                    cb.on_error(e, f"_get_llm_response attempt {attempt + 1}")
-
-                if isinstance(e, RateLimitError):
-                    if attempt == self.config.max_retries - 1:
-                        logger.error("API Rate Limit reached after retries.")
-                        raise
-                    sleep_time = 2**attempt
-                    logger.warning(f"Rate limit reached. Retrying in {sleep_time}s...")
-                    time.sleep(sleep_time)
-                    continue
-
-                # For other transient errors (timeouts, connection issues), log warning instead of full error trace
-                if attempt < self.config.max_retries - 1:
-                    logger.warning(
-                        f"Transient error in _get_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}. Retrying..."
-                    )
-                    time.sleep(2**attempt)
-                else:
-                    # Final attempt failed, log full error
-                    logger.error(
-                        f"Error in _get_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}",
-                        exc_info=True,
-                    )
-                    raise
-
-        msg = f"LLM completions ({self.client.__class__.__name__}) failed after {self.config.max_retries} retries."
-        logger.critical(msg)
-        raise RuntimeError(msg)
 
     def _split_concatenated_json_objects(self, json_string: str) -> List[str]:
         """Attempt to split a string that may contain multiple concatenated JSON objects."""
@@ -479,103 +300,14 @@ class BaseAgent(Runnable):
 
         return str(result)
 
-    def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Execute a single tool and return its output as a string."""
-        tool = self._tools.get(tool_name)
-
-        for cb in self.callbacks:
-            cb.on_tool_start(tool_name, arguments)
-
-        if not tool:
-            err_msg = json.dumps({"error": f"Tool '{tool_name}' is not registered."})
-            for cb in self.callbacks:
-                cb.on_tool_finish(tool_name, err_msg)
-            return err_msg
-
-        try:
-            self._validate_tool_arguments(tool, arguments)
-            result = tool(**arguments)
-            result_str = self._serialize_tool_result(result)
-            for cb in self.callbacks:
-                cb.on_tool_finish(tool_name, result_str)
-            return result_str
-        except Exception as e:
-            for cb in self.callbacks:
-                cb.on_error(e, f"Tool execution: {tool_name}")
-            logger.error(
-                f"Unexpected error executing tool '{tool_name}': {e}", exc_info=True
-            )
-            return json.dumps(
-                {"error": f"Unexpected error executing tool '{tool_name}': {e}"}
-            )
-
-    def _process_stream_response(
-        self, response_stream: Iterator[Any]
-    ) -> Generator[str, None, List[Dict[str, Any]]]:
-        """
-        Process streaming response, yielding content and collecting tool calls.
-        Returns a tuple of (assembled tool calls, full reasoning content).
-        """
-        tool_call_assembler: Dict[int, Dict[str, Any]] = {}
-
-        full_content = []
-        full_reasoning = []
-
-        for chunk in response_stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-
-            if delta.content:
-                for cb in self.callbacks:
-                    cb.on_llm_new_token(delta.content)
-                full_content.append(delta.content)
-                yield delta.content
-
-            # Handle reasoning content if present (e.g. DeepSeek-R1)
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                for cb in self.callbacks:
-                    cb.on_reasoning_step(delta.reasoning_content)
-                full_reasoning.append(delta.reasoning_content)
-
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in tool_call_assembler:
-                        tool_call_assembler[idx] = {
-                            "id": None,
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""},
-                        }
-                    call_data = tool_call_assembler[idx]
-                    if tc_delta.id and not call_data["id"]:
-                        call_data["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            call_data["function"]["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            call_data["function"]["arguments"] += (
-                                tc_delta.function.arguments
-                            )
-
-        # Call on_llm_end with the full accumulated content
-        full_response_text = "".join(full_content)
-        for cb in self.callbacks:
-            # Construct a minimal mock response object or just pass the text if the handler supports it.
-            # The protocol says 'response: Any'.
-            cb.on_llm_end(full_response_text)
-
-        assembled_tool_calls = []
-        for idx in sorted(tool_call_assembler.keys()):
-            call_data = tool_call_assembler[idx]
-            if not call_data.get("id"):
-                call_data["id"] = (
-                    f"s_{self.config.provider[:3]}_tc_{idx}_{uuid.uuid4().hex[:6]}"
-                )
-            if call_data.get("function", {}).get("name"):
-                assembled_tool_calls.append(call_data)
-
-        return assembled_tool_calls, "".join(full_reasoning)
+    @staticmethod
+    def _is_tool_call_consistency_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            "tool_calls" in msg
+            and "tool messages" in msg
+            and "tool_call_id" in msg
+        )
 
     def _process_sync_response(
         self, msg_object: Any
@@ -656,131 +388,6 @@ class BaseAgent(Runnable):
 
         return expanded_tool_calls
 
-    def _execute_agent_loop(
-        self,
-        user_input: str,
-        *,
-        addr: MemoryAddress,
-        image_path: Optional[str] = None,
-        image_detail_override: Optional[str] = None,
-    ) -> Generator[str, None, None]:
-        """Orchestrates the agent logic:
-        1. Prepare context (system + user message).
-        2. Loop:
-           - Get LLM response (stream or sync).
-           - Yield content if streaming.
-           - If tool calls: execute and append results.
-           - If no tool calls: break.
-        """
-        self._ensure_system_initialized(addr)
-
-        for cb in self.callbacks:
-            cb.on_agent_start(self.config.name, user_input)
-
-        for hook in self.pre_hooks:
-            self._execute_hook(hook, agent=self, user_input=user_input)
-
-        user_content = self._build_user_content(
-            user_input,
-            image_path=image_path,
-            image_detail_override=image_detail_override,
-        )
-        if user_content is not None:
-            self.add(role="user", content=user_content, addr=addr)
-
-        accumulated_response: List[str] = []
-
-        iteration_count = 0
-        while True:
-            if self.config.max_tool_iter is not None and iteration_count >= self.config.max_tool_iter:
-                break
-            iteration_count += 1
-
-            response_or_stream = self._get_llm_response(addr=addr)
-
-            current_turn_content_parts: List[str] = []
-            assembled_tool_calls: List[Dict[str, Any]] = []
-            full_reasoning_content: Optional[str] = None
-
-            if self.config.stream:
-                gen = self._process_stream_response(response_or_stream)  # type: ignore
-                try:
-                    while True:
-                        content_chunk = next(gen)
-                        yield content_chunk
-                        current_turn_content_parts.append(content_chunk)
-                        accumulated_response.append(content_chunk)
-                except StopIteration as e:
-                    assembled_tool_calls, full_reasoning_content = e.value
-            else:
-                content, assembled_tool_calls, full_reasoning_content = self._process_sync_response(
-                    response_or_stream
-                )
-                if content:
-                    yield content
-                    current_turn_content_parts.append(content)
-                    accumulated_response.append(content)
-
-            # Expand tool calls (fix for some models)
-            assembled_tool_calls = self._expand_tool_calls(assembled_tool_calls)
-            full_turn_content = "".join(current_turn_content_parts)
-
-            # Exit if no tool calls are present
-            if not assembled_tool_calls:
-                # Add reasoning to metadata if present
-                msg_kwargs = {}
-                if full_reasoning_content:
-                    msg_kwargs["metadata"] = {"reasoning_content": full_reasoning_content}
-                
-                self.add(role="assistant", content=full_turn_content, addr=addr, **msg_kwargs)
-                for cb in self.callbacks:
-                    cb.on_agent_finish(self.config.name, full_turn_content)
-                break
-
-            # Record assistant message with tool calls
-            assistant_msg: Dict[str, Any] = {"role": "assistant"}
-            if full_turn_content:
-                assistant_msg["content"] = full_turn_content
-            assistant_msg["tool_calls"] = assembled_tool_calls
-            if full_reasoning_content:
-                assistant_msg["metadata"] = {"reasoning_content": full_reasoning_content}
-            
-            self.add(addr=addr, **assistant_msg)
-
-            # Execute tools
-            for tc in assembled_tool_calls:
-                tool_name = tc["function"]["name"]
-                tool_call_id = tc["id"]
-                args_str = tc["function"]["arguments"]
-
-                try:
-                    args = self._parse_tool_arguments(tool_name, args_str)
-                    result_content = self._execute_tool(tool_name, args)
-                except ValueError as e:
-                    result_content = json.dumps({"error": str(e)})
-
-                self.add(
-                    role="tool",
-                    content=result_content,
-                    tool_call_id=tool_call_id,
-                    name=tool_name,
-                    addr=addr,
-                )
-        else:
-            warn_msg = f"\n[WARNING] Agent '{self.config.name}' reached max iterations ({self.config.max_tool_iter}).\n"
-            logger.warning(warn_msg.strip())
-            # Notify finish even on max iterations
-            for cb in self.callbacks:
-                cb.on_agent_finish(self.config.name, warn_msg)
-            yield warn_msg
-            accumulated_response.append(warn_msg)
-
-        full_response = "".join(accumulated_response)
-        for hook in self.post_hooks:
-            self._execute_hook(
-                hook, agent=self, user_input=user_input, response=full_response
-            )
-
     # Public entrypoint
 
     def run(
@@ -792,24 +399,48 @@ class BaseAgent(Runnable):
         image_detail_override: Optional[str] = None,
         **kwargs: Any,
     ) -> Union[str, Generator[str, None, None]]:
-        """Main entrypoint to interact with the agent.
-        
-        Args:
-            user_input: The text input from the user.
-            addr: The memory address for the conversation.
-            image_path: Optional path to an image file.
-            image_detail_override: Optional detail level for image processing.
-            **kwargs: Additional arguments for compatibility.
-            
-        Returns:
-            The agent's response as a string or a generator if streaming is enabled.
-        """
+        """Synchronous wrapper around `arun()`."""
+        if self.config.stream:
+            return stream_async_to_sync(
+                lambda: self.arun(
+                    user_input,
+                    addr=addr,
+                    image_path=image_path,
+                    image_detail_override=image_detail_override,
+                    **kwargs,
+                ),
+                api_name="run",
+                async_api_name="arun",
+            )
+
+        return run_coro_blocking(
+            self.arun(
+                user_input,
+                addr=addr,
+                image_path=image_path,
+                image_detail_override=image_detail_override,
+                **kwargs,
+            ),
+            api_name="run",
+            async_api_name="arun",
+        )
+
+    async def arun(
+        self,
+        user_input: str,
+        *,
+        addr: Optional[MemoryAddress] = None,
+        image_path: Optional[str] = None,
+        image_detail_override: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Union[str, AsyncGenerator[str, None]]:
+        """Asynchronous execution entrypoint (source of truth)."""
         # If addr is not provided, try to get it from kwargs (Protocol compatibility)
         if addr is None and "memory_address" in kwargs:
-             addr = kwargs["memory_address"]
+            addr = kwargs["memory_address"]
 
         a = self._addr_or_raise(addr)
-        response_generator = self._execute_agent_loop(
+        response_generator = self._aexecute_agent_loop(
             user_input,
             addr=a,
             image_path=image_path,
@@ -819,7 +450,9 @@ class BaseAgent(Runnable):
         if self.config.stream:
             return response_generator
 
-        parts: List[str] = list(response_generator)
+        parts: List[str] = []
+        async for chunk in response_generator:
+            parts.append(chunk)
         return "".join(parts).strip()
 
     # -------------------------------------------------------------------------
@@ -901,16 +534,32 @@ class BaseAgent(Runnable):
 
                 # For other transient errors (timeouts, connection issues), log warning instead of full error trace
                 if attempt < self.config.max_retries - 1:
-                    logger.warning(
-                        f"Transient error in _aget_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}. Retrying..."
-                    )
+                    if self._is_tool_call_consistency_error(e):
+                        logger.debug(
+                            "Consistency error in _aget_llm_response (attempt %s/%s). Retrying.",
+                            attempt + 1,
+                            self.config.max_retries,
+                        )
+                    else:
+                        logger.warning(
+                            f"Transient error in _aget_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}. Retrying..."
+                        )
                     await asyncio.sleep(2**attempt)
                 else:
                     # Final attempt failed, log full error
-                    logger.error(
-                        f"Error in _aget_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}",
-                        exc_info=True,
-                    )
+                    if self._is_tool_call_consistency_error(e):
+                        logger.debug(
+                            "Consistency error in _aget_llm_response "
+                            "(attempt %s/%s): %s",
+                            attempt + 1,
+                            self.config.max_retries,
+                            e,
+                        )
+                    else:
+                        logger.error(
+                            f"Error in _aget_llm_response (attempt {attempt + 1}/{self.config.max_retries}): {e}",
+                            exc_info=True,
+                        )
                     raise
 
         msg = f"LLM completions ({async_client.__class__.__name__}) failed after {self.config.max_retries} retries."
@@ -940,8 +589,9 @@ class BaseAgent(Runnable):
                 result = await tool.func(**arguments)
             else:
                 # Run sync function in thread pool to avoid blocking
+                current_ctx = contextvars.copy_context()
                 result = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: tool(**arguments)
+                    None, lambda: current_ctx.run(tool, **arguments)
                 )
             result_str = self._serialize_tool_result(result)
             for cb in self.callbacks:
@@ -1115,10 +765,17 @@ class BaseAgent(Runnable):
                     # Add timeout to prevent indefinite hangs
                     result_content = await asyncio.wait_for(
                         self._aexecute_tool(tool_name, args),
-                        timeout=60.0  # Default 60s timeout for tools
+                        timeout=float(self.config.tool_timeout),
                     )
                 except asyncio.TimeoutError:
-                    result_content = json.dumps({"error": f"Tool '{tool_name}' execution timed out after 60 seconds."})
+                    result_content = json.dumps(
+                        {
+                            "error": (
+                                f"Tool '{tool_name}' execution timed out after "
+                                f"{self.config.tool_timeout} seconds."
+                            )
+                        }
+                    )
                 except ValueError as e:
                     result_content = json.dumps({"error": str(e)})
                 return tool_call_id, tool_name, result_content
@@ -1150,54 +807,7 @@ class BaseAgent(Runnable):
                 hook, agent=self, user_input=user_input, response=full_response
             )
 
-    async def arun(
-        self,
-        user_input: str,
-        *,
-        addr: Optional[MemoryAddress] = None,
-        image_path: Optional[str] = None,
-        image_detail_override: Optional[str] = None,
-        **kwargs: Any,
-    ) -> Union[str, AsyncGenerator[str, None]]:
-        """Async entrypoint to interact with the agent.
-        
-        This is the async version of `run()`. It executes LLM calls
-        and tool executions asynchronously, with parallel tool execution
-        when multiple tools are called.
-        
-        Args:
-            user_input: The text input from the user.
-            addr: The memory address for the conversation.
-            image_path: Optional path to an image file.
-            image_detail_override: Optional detail level for image processing.
-            **kwargs: Additional arguments for compatibility.
-            
-        Returns:
-            The agent's response as a string or an async generator if streaming is enabled.
-        """
-        # If addr is not provided, try to get it from kwargs (Protocol compatibility)
-        if addr is None and "memory_address" in kwargs:
-             addr = kwargs["memory_address"]
-
-        a = self._addr_or_raise(addr)
-
-        response_generator = self._aexecute_agent_loop(
-            user_input,
-            addr=a,
-            image_path=image_path,
-            image_detail_override=image_detail_override,
-        )
-
-        if self.config.stream:
-            return response_generator
-
-        parts: List[str] = []
-        async for chunk in response_generator:
-            parts.append(chunk)
-        return "".join(parts).strip()
-
     # Tool registry management
-
 
     def tool_exists(self, name: str) -> bool:
         """Check whether a tool is registered."""
