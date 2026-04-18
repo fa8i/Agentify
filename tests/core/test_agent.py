@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, AsyncMock
 import sys
 
 # Mock dependencies before import
@@ -42,18 +42,62 @@ def test_agent_initialization(agent_config, memory_service, memory_address):
     assert agent.config.name == "TestAgent"
     assert len(agent.callbacks) == 1  # Default logger
 
-def test_agent_callbacks(agent_config, memory_service, memory_address):
+
+def test_agent_run_sync_bridge(agent_config, memory_service, memory_address):
+    mock_factory = MagicMock()
+    mock_factory.create_client.return_value = MagicMock()
+    async_client = MagicMock()
+    async_client.chat.completions.create = AsyncMock(
+        return_value=MagicMock(
+            choices=[MagicMock(message=MagicMock(content="Hello", tool_calls=None))]
+        )
+    )
+    mock_factory.create_async_client.return_value = async_client
+
+    agent = BaseAgent(
+        config=agent_config,
+        memory=memory_service,
+        memory_address=memory_address,
+        client_factory=mock_factory,
+    )
+
+    response = agent.run("Hi")
+    assert response == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_agent_run_raises_inside_running_loop(
+    agent_config, memory_service, memory_address
+):
+    mock_factory = MagicMock()
+    mock_factory.create_client.return_value = MagicMock()
+    mock_factory.create_async_client.return_value = MagicMock()
+
+    agent = BaseAgent(
+        config=agent_config,
+        memory=memory_service,
+        memory_address=memory_address,
+        client_factory=mock_factory,
+    )
+
+    with pytest.raises(RuntimeError, match="cannot be used while an event loop is running"):
+        agent.run("Hi")
+
+@pytest.mark.asyncio
+async def test_agent_callbacks(agent_config, memory_service, memory_address):
     callback = MockCallback()
     agent_config.callbacks = [callback]
     
     mock_factory = MagicMock()
-    mock_client = MagicMock()
-    mock_factory.create_client.return_value = mock_client
+    mock_sync_client = MagicMock()
+    mock_factory.create_client.return_value = mock_sync_client
+    async_client = MagicMock()
+    mock_factory.create_async_client.return_value = async_client
     
     # Mock LLM response
     mock_response = MagicMock()
     mock_response.choices = [MagicMock(message=MagicMock(content="Hello", tool_calls=None))]
-    mock_client.chat.completions.create.return_value = mock_response
+    async_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
     agent = BaseAgent(
         config=agent_config,
@@ -62,20 +106,23 @@ def test_agent_callbacks(agent_config, memory_service, memory_address):
         client_factory=mock_factory
     )
     
-    agent.run("Hi")
+    await agent.arun("Hi")
     
     assert ("agent_start", "TestAgent") in callback.events
     assert ("agent_finish", "Hello") in callback.events
 
-def test_tool_execution(agent_config, memory_service, memory_address):
+@pytest.mark.asyncio
+async def test_tool_execution(agent_config, memory_service, memory_address):
     def my_tool(x: int):
         return str(x * 2)
     
     tool = Tool(schema={"name": "double", "description": "Doubles x"}, func=my_tool)
     
     mock_factory = MagicMock()
-    mock_client = MagicMock()
-    mock_factory.create_client.return_value = mock_client
+    mock_sync_client = MagicMock()
+    mock_factory.create_client.return_value = mock_sync_client
+    async_client = MagicMock()
+    mock_factory.create_async_client.return_value = async_client
     
     # 1. Assistant calls tool
     msg1 = MagicMock()
@@ -92,10 +139,10 @@ def test_tool_execution(agent_config, memory_service, memory_address):
     msg2.content = "The answer is 42"
     msg2.tool_calls = None
     
-    mock_client.chat.completions.create.side_effect = [
+    async_client.chat.completions.create = AsyncMock(side_effect=[
         MagicMock(choices=[MagicMock(message=msg1)]),
         MagicMock(choices=[MagicMock(message=msg2)])
-    ]
+    ])
 
     agent = BaseAgent(
         config=agent_config,
@@ -105,7 +152,7 @@ def test_tool_execution(agent_config, memory_service, memory_address):
         client_factory=mock_factory
     )
     
-    response = agent.run("Double 21")
+    response = await agent.arun("Double 21")
     
     assert response == "The answer is 42"
     
@@ -117,7 +164,8 @@ def test_tool_execution(agent_config, memory_service, memory_address):
     assert history[3]["content"] == "42"
 
 
-def test_tool_schema_validation(agent_config, memory_service, memory_address):
+@pytest.mark.asyncio
+async def test_tool_schema_validation(agent_config, memory_service, memory_address):
     def my_tool(x: int):
         return str(x * 2)
 
@@ -146,7 +194,7 @@ def test_tool_schema_validation(agent_config, memory_service, memory_address):
         client_factory=mock_factory,
     )
 
-    result = agent._execute_tool("double", {})
+    result = await agent._aexecute_tool("double", {})
 
     assert "schema validation" in result
     assert "error" in result

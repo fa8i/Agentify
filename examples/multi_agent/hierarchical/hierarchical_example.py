@@ -1,13 +1,16 @@
 import os
 import sys
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.multi_agent import HierarchicalTeam
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def main():
     store = InMemoryStore()
@@ -19,7 +22,7 @@ def main():
     coder_config = AgentConfig(
         name="Coder",
         system_prompt="You are a Python expert. Write code snippets based on instructions.",
-        model_name="gpt-4o-mini",
+        model_name="gpt-4.1-mini",
         provider="openai",
     )
     coder = BaseAgent(config=coder_config, memory=memory_service)
@@ -27,7 +30,7 @@ def main():
     tester_config = AgentConfig(
         name="Tester",
         system_prompt="You are a QA engineer. Review code and suggest tests.",
-        model_name="gpt-4o-mini",
+        model_name="gpt-4.1-mini",
         provider="openai",
     )
     tester = BaseAgent(config=tester_config, memory=memory_service)
@@ -36,7 +39,7 @@ def main():
     manager_config = AgentConfig(
         name="TechLead",
         system_prompt="You are a Tech Lead. You manage a Coder and a Tester. Delegate tasks to them to solve the user's request.",
-        model_name="gpt-4o-mini",
+        model_name="gpt-4.1-mini",
         provider="openai",
     )
     manager = BaseAgent(config=manager_config, memory=memory_service)
@@ -45,7 +48,7 @@ def main():
     director_config = AgentConfig(
         name="Director",
         system_prompt="You are the Director of Engineering. You receive high-level requests and delegate them to your Tech Lead.",
-        model_name="gpt-4o-mini",
+        model_name="gpt-4.1-mini",
         provider="openai",
     )
     director = BaseAgent(config=director_config, memory=memory_service)

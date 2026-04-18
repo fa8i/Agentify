@@ -123,7 +123,7 @@ def create_investment_system():
             system_prompt="You are a Compliance Officer. Check the proposed trade/analysis for any regulatory issues (SEC restrictions, insider lists, etc). If clean, say 'APPROVED'.",
             provider="deepseek",
             model_name="deepseek-reasoner",
-            reasoning_effort="high",
+            reasoning_effort="low",
             temperature=0.1
         ),
         memory=memory_service
@@ -133,10 +133,10 @@ def create_investment_system():
         config=AgentConfig(
             name="RiskManager",
             system_prompt="You are a Risk Manager. Receive the compliance status and the research summary. Calculate portfolio exposure and recommend position sizing (Small/Medium/Large).",
-            provider="deepseek",
-            model_name="deepseek-reasoner",
-            reasoning_effort="high",
-            temperature=0.2
+            provider="openai",
+            model_name="gpt-5-mini",
+            reasoning_effort="low",
+            temperature=1
         ),
         memory=memory_service
     )
@@ -156,9 +156,10 @@ def create_investment_system():
                 "2. Then, send their findings to the RiskPipeline to get approval and sizing. "
                 "3. Finally, issue a final BUY/SELL/HOLD recommendation based on everything."
             ),
-            provider="deepseek",
-            model_name="deepseek-chat",
-            temperature=0.4
+            provider="openai",
+            model_name="gpt-5-mini",
+            reasoning_effort="low",
+            temperature=1
         ),
         memory=memory_service
     )

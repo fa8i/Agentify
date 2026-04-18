@@ -17,11 +17,11 @@ BUILTIN_TOOLS_REGISTRY = {
     "get_weather": WeatherTool(),
 }
 
-PROVIDERS = ["azure", "openai", "deepseek", "gemini", "anthropic", "llama"]
+PROVIDERS = ["azure", "openai", "deepseek", "gemini", "anthropic", "local"]
 
 PROVIDER_MODELS = {
-    "azure": ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
-    "openai": ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
+    "azure": ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-5", "gpt-5-mini"],
+    "openai": ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-5", "gpt-5-mini"],
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
     "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
     "anthropic": [
@@ -32,13 +32,14 @@ PROVIDER_MODELS = {
         "claude-3-5-haiku-20241022",
         "claude-3-haiku-20240307",
     ],
-    "llama": [
-        "Llama-4-Scout-17B-16E-Instruct-FP8",
-        "Cerebras-Llama-4-Scout-17B-16E-Instruct",
-        "Llama-4-Maverick-17B-128E-Instruct-FP8",
-        "Groq-Llama-4-Maverick-17B-128E-Instruct",
-        "Llama-3.3-70B-Instruct",
-    ],
+    "local": [
+        "google/gemma-4-e4b", 
+        "google/gemma-4-e2b", 
+        "google/gemma-4-26b-a4b", 
+        "qwen/qwen3.5-9b", 
+        "qwen/qwen3.6-35b-a3b",
+        "openai/gpt-oss-20b",
+    ]
 }
 
 # store = RedisStore(url="redis://localhost:6379/0")
@@ -55,6 +56,7 @@ def create_agent_instance(
     timeout_val,
     stream_val,
     selected_tools_val,
+    local_base_url_val=None,
 ):
     """Create a new agent instance with the specified parameters."""
     tools_val = selected_tools_val or []
@@ -68,6 +70,10 @@ def create_agent_instance(
         timeout=timeout_val,
         stream=stream_val,
     )
+    
+    if provider_val == "local" and local_base_url_val:
+        config.client_config_override = {"base_url": local_base_url_val}
+    
     # Build a fresh MemoryAddress for this agent instance so the logs show the agent's name.
     agent_addr = MemoryAddress(
         api_version="",
@@ -171,6 +177,13 @@ def build_interface():
                 minimum=0, maximum=1, value=0.5, step=0.05, label="Temperature"
             )
 
+            local_base_url = gr.Textbox(
+                label="Local Base URL",
+                value="http://localhost:1234/v1",
+                placeholder="http://localhost:1234/v1",
+                visible=False,
+            )
+
             gr.Markdown("## Tools & Advanced:")
 
             # Available tools
@@ -233,6 +246,7 @@ def build_interface():
             time_val,
             stream_val,
             tools_list_val,
+            local_base_url_val,
         ):
             """Create an agent and update its state."""
             try:
@@ -244,6 +258,7 @@ def build_interface():
                     time_val,
                     stream_val,
                     tools_list_val,
+                    local_base_url_val,
                 )
                 status = f"Active - {provider_val}/{model_val}"
                 tools_text = ", ".join(tools_list_val) if tools_list_val else "None"
@@ -259,6 +274,7 @@ def build_interface():
             time_val,
             stream_val,
             tools_list_val,
+            local_base_url_val,
         ):
             """Handle rebuild button click."""
             new_agent, status, tools_text = agent_creation_logic(
@@ -269,6 +285,7 @@ def build_interface():
                 time_val,
                 stream_val,
                 tools_list_val,
+                local_base_url_val,
             )
             clear_agent_memory(new_agent)
             return new_agent, [], {"text": "", "files": []}, status, tools_text
@@ -339,6 +356,13 @@ def build_interface():
             update_provider_change, inputs=[provider_input], outputs=[model_input]
         )
 
+        def toggle_local_url(provider):
+            return gr.update(visible=(provider == "local"))
+
+        provider_input.change(
+            toggle_local_url, inputs=[provider_input], outputs=[local_base_url]
+        )
+
         demo.load(
             agent_creation_logic,
             inputs=[
@@ -349,6 +373,7 @@ def build_interface():
                 timeout_number,
                 stream_checkbox,
                 tools_checkbox_group,
+                local_base_url,
             ],
             outputs=[agent_state, agent_status, active_tools],
         )
@@ -363,6 +388,7 @@ def build_interface():
                 timeout_number,
                 stream_checkbox,
                 tools_checkbox_group,
+                local_base_url,
             ],
             outputs=[
                 agent_state,

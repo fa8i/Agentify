@@ -2,7 +2,7 @@ import os
 import sys
 from dotenv import load_dotenv
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService

@@ -2,6 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock
 from agentify.multi_agent import Team, Pipeline, HierarchicalTeam
+from agentify.multi_agent.tool_wrapper import AgentTool
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService, MemoryAddress
 from agentify.memory.stores.in_memory_store import InMemoryStore
@@ -16,7 +17,10 @@ class AsyncMockAgent(BaseAgent):
             provider="openai",
             model_name="gpt-4o-mini"
         )
-        super().__init__(config=config, memory=memory)
+        mock_factory = MagicMock()
+        mock_factory.create_client.return_value = MagicMock()
+        mock_factory.create_async_client.return_value = MagicMock()
+        super().__init__(config=config, memory=memory, client_factory=mock_factory)
         self._preset_response = response
         
         # Mock the internal methods to avoid actual API calls
@@ -80,3 +84,42 @@ async def test_hierarchical_arun_delegation():
     
     assert result == "Hierarchy Result"
     assert root.arun.called
+
+
+@pytest.mark.asyncio
+async def test_agenttool_async_recovery_on_consistency_error():
+    worker = AsyncMockAgent("Worker", response="Recovered")
+    consistency_error = Exception(
+        "An assistant message with 'tool_calls' must be followed by tool messages "
+        "responding to each 'tool_call_id'."
+    )
+    worker.arun = AsyncMock(side_effect=[consistency_error, "Recovered"])
+
+    parent_addr = MemoryAddress(user_id="u1", conversation_id="s1", agent_id="Supervisor")
+    tool = AgentTool(agent=worker, parent_addr=parent_addr)
+
+    result = await tool.async_func(instructions="do work")
+
+    assert result["response"] == "Recovered"
+    assert worker.arun.await_count == 2
+    second_call_addr = worker.arun.await_args_list[1].kwargs["addr"]
+    assert "__rcv__" in second_call_addr.conversation_id
+
+
+@pytest.mark.asyncio
+async def test_agenttool_async_recovery_can_be_disabled():
+    worker = AsyncMockAgent("Worker", response="Recovered")
+    worker.config.delegation_recovery_enabled = False
+    consistency_error = Exception(
+        "An assistant message with 'tool_calls' must be followed by tool messages "
+        "responding to each 'tool_call_id'."
+    )
+    worker.arun = AsyncMock(side_effect=consistency_error)
+
+    parent_addr = MemoryAddress(user_id="u1", conversation_id="s1", agent_id="Supervisor")
+    tool = AgentTool(agent=worker, parent_addr=parent_addr)
+
+    result = await tool.async_func(instructions="do work")
+
+    assert "error" in result
+    assert worker.arun.await_count == 1
