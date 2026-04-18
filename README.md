@@ -14,7 +14,7 @@ Agentify is a lightweight, clean, and powerful Python library for building AI ag
 It provides simple abstractions for memory, tools, and orchestration without the heavy framework lock-in.
 </p>
 
-[Getting Started](docs/getting_started.md) • [Documentation](docs/api_reference.md) • [Examples](examples/)
+[Getting Started](docs/getting_started.md) • [Documentation](docs/api_reference.md) • [Examples](examples/) • [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -27,7 +27,8 @@ It provides simple abstractions for memory, tools, and orchestration without the
 | **Multi-Agent Orchestration** | Teams, sequential pipelines, hierarchical structures, and dynamic sub-agent spawning. |
 | **Memory Service** | Pluggable backends (In-Memory, SQLite, Redis, Elasticsearch) with configurable TTL, limits and token budgets. |
 | **Tools & MCP** | Easy `@tool` decorator, custom classes, and full **Model Context Protocol (MCP)** integration. |
-| **Async & Parallel** | Native `arun()` support for high-performance concurrent agent execution. |
+| **Local Models** | First-class support for **LM Studio**, **Ollama**, and other local servers via OpenAI-compatible endpoints. |
+| **Async & Parallel** | Dual API: simple `run()` for sync usage and `arun()` for native async execution. |
 | **Observability** | Comprehensive callback system for monitoring, debugging, and tracing agent thoughts. |
 | **Reasoning & Planning** | Configure thinking depth, chain-of-thought storage, and real-time reasoning logs. |
 
@@ -83,8 +84,12 @@ agent = BaseAgent(
     tools=[get_time]
 )
 
-# 4. Run it
+# 4. Run it (sync)
 response = agent.run(user_input="What time is it?")
+print(response)
+
+# Async usage is also available:
+# response = await agent.arun(user_input="What time is it?")
 ```
 
 ## Documentation

@@ -4,14 +4,20 @@ Agentify provides powerful patterns for coordinating multiple agents.
 
 ## Overview
 
-All multi-agent patterns share a common `run()` interface, making them composable:
+All multi-agent patterns share the same dual interface: sync `run()` and async `arun()`.
 
 ```python
-# All of these work the same way
+# Sync usage
 agent_response = agent.run(user_input)
 team_response = team.run(user_input)
 pipeline_response = pipeline.run(user_input)
 hierarchy_response = hierarchy.run(user_input)
+
+# Async usage
+agent_response = await agent.arun(user_input)
+team_response = await team.arun(user_input)
+pipeline_response = await pipeline.arun(user_input)
+hierarchy_response = await hierarchy.arun(user_input)
 ```
 
 ## Team (Supervisor-Workers)
@@ -78,9 +84,8 @@ supervisor = BaseAgent(
 
 # Create team
 team = Team(
+    agents=[supervisor, researcher, analyst],
     supervisor=supervisor,
-    workers=[researcher, analyst],
-    session_id="team_session"
 )
 
 # Run the team
@@ -144,8 +149,7 @@ step3 = BaseAgent(
 
 # Create pipeline
 pipeline = SequentialPipeline(
-    steps=[step1, step2, step3],
-    session_id="pipeline_session"
+    steps=[step1, step2, step3]
 )
 
 # Run pipeline
@@ -198,8 +202,7 @@ hierarchy = HierarchicalTeam(
     hierarchy={
         ceo: [cto, cfo],     # CEO manages CTO and CFO
         cto: [engineer]      # CTO manages Engineer
-    },
-    session_id="hierarchy_session"
+    }
 )
 
 # Run hierarchy
@@ -226,8 +229,8 @@ writing_pipeline = SequentialPipeline(steps=[...])
 
 # Use as team workers
 team = Team(
+    agents=[manager, research_pipeline, writing_pipeline],
     supervisor=manager,
-    workers=[research_pipeline, writing_pipeline]
 )
 ```
 
@@ -235,8 +238,8 @@ team = Team(
 
 ```python
 # Create teams
-data_team = Team(supervisor=data_lead, workers=[...])
-analysis_team = Team(supervisor=analysis_lead, workers=[...])
+data_team = Team(agents=[data_lead, ...], supervisor=data_lead)
+analysis_team = Team(agents=[analysis_lead, ...], supervisor=analysis_lead)
 
 # Chain teams in pipeline
 pipeline = SequentialPipeline(
@@ -275,8 +278,8 @@ response = agent.run(
 ```python
 # Good: specialized workers
 team = Team(
+    agents=[manager, data_expert, code_expert, doc_expert],
     supervisor=manager,
-    workers=[data_expert, code_expert, doc_expert]
 )
 ```
 

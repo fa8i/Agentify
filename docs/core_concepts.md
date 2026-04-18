@@ -64,6 +64,8 @@ MemoryService
     ├── ConversationStore (Backend)
     │   ├── InMemoryStore
     │   └── RedisStore
+    │   └── SQLiteStore
+    │   └── ElasticsearchStore
     │
     └── MemoryPolicy (Rules)
         ├── Message limit
@@ -354,6 +356,18 @@ config = AgentConfig(
     model_name="model",
     client_config_override={
         "api_version": "2024-02-15-preview"
+    }
+)
+```
+
+### Local LLMs (LM Studio, Ollama, etc.)
+```python
+config = AgentConfig(
+    provider="local",
+    model_name="google/gemma-4-e4b",  # Example
+    # Optional override if not using env vars
+    client_config_override={
+        "base_url": "http://localhost:1234/v1"
     }
 )
 ```
