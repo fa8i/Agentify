@@ -18,11 +18,16 @@ class AgentConfig:
     provider: str
     model_name: str
     temperature: float = 1
-    timeout: int = 60
+    timeout: int = 300
+    tool_timeout: int = 300
     stream: bool = False
     max_retries: int = 3
     verbose: bool = True
     max_tool_iter: Optional[int] = 10
+    delegation_recovery_enabled: bool = True
+    delegation_recovery_mode: str = "retry_isolated"
+    delegation_max_retries: int = 1
+    delegation_retry_backoff_ms: int = 200
     reasoning_effort: Optional[str] = None
     model_kwargs: Optional[Dict[str, Any]] = None
     client_config_override: Optional[Dict[str, Any]] = None

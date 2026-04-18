@@ -108,4 +108,13 @@ class LoggingCallbackHandler(AgentCallbackHandler):
         )
 
     def on_error(self, error: Exception, context: str) -> None:
+        msg = str(error).lower()
+        is_consistency_error = (
+            "tool_calls" in msg
+            and "tool messages" in msg
+            and "tool_call_id" in msg
+        )
+        if is_consistency_error:
+            self.logger.debug(f"Recoverable error in {context}: {error}")
+            return
         self.logger.error(f"Error in {context}: {error}", exc_info=True)

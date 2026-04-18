@@ -1,4 +1,4 @@
-from typing import Protocol, Any, Dict, Optional, Generator, AsyncGenerator, Union
+from typing import Protocol, Any, Generator, AsyncGenerator, Union
 
 class Runnable(Protocol):
     """Standard interface for any chainable unit/agent in Agentify."""
