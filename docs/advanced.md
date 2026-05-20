@@ -122,7 +122,7 @@ def flexible_hook(**kwargs):
 
 ## Reasoning Models
 
-Models with built-in reasoning (like o1, DeepSeek-R1) are fully supported:
+Models with built-in reasoning are fully supported:
 
 ```python
 agent = BaseAgent(
