@@ -1,8 +1,6 @@
 from __future__ import annotations
-import json
 import logging
 from typing import List, Optional, Any, Dict
-from datetime import datetime
 
 try:
     from elasticsearch import Elasticsearch
@@ -71,7 +69,10 @@ class ElasticsearchStore(ConversationStore):
                     
                     # Structured Objects 
                     "metadata": {"type": "object", "enabled": True}, 
-                    "address_key": {"type": "keyword"}
+                    "address_key": {"type": "keyword"},
+                    
+                    # Internal field for tie-breaking stable sorts
+                    "_insert_seq": {"type": "long"}
                 }
             }
         }
@@ -82,7 +83,7 @@ class ElasticsearchStore(ConversationStore):
             logger.error(f"Failed to create index {self.index_name}: {e}")
             raise
 
-    def _addr_to_doc(self, addr: MemoryAddress, msg: Message) -> Dict[str, Any]:
+    def _addr_to_doc(self, addr: MemoryAddress, msg: Message, insert_seq: int = 0) -> Dict[str, Any]:
         """Flatten address + message into a single document."""
         base = msg.to_dict()
         # Add filtering fields
@@ -93,6 +94,7 @@ class ElasticsearchStore(ConversationStore):
             "conversation_id": addr.conversation_id,
             "agent_id": addr.agent_id,
             "address_key": addr.key_str(),
+            "_insert_seq": insert_seq,
         })
 
         return base
@@ -113,7 +115,8 @@ class ElasticsearchStore(ConversationStore):
         return must
 
     def append_message(self, addr: MemoryAddress, msg: Message) -> None:
-        doc = self._addr_to_doc(addr, msg)
+        import time
+        doc = self._addr_to_doc(addr, msg, insert_seq=time.time_ns())
         self.client.index(index=self.index_name, id=msg.id, document=doc, refresh=True) 
         # refresh='true' makes it visible immediately (good for chat consistency, possibly slower for bulk)
 
@@ -126,7 +129,7 @@ class ElasticsearchStore(ConversationStore):
 
         query = {
             "query": {"bool": {"filter": must}},
-            "sort": [{"ts": {"order": "asc"}}],
+            "sort": [{"ts": {"order": "asc"}}, {"_insert_seq": {"order": "asc"}}],
             "size": size,
             "from": start
         }
@@ -165,8 +168,8 @@ class ElasticsearchStore(ConversationStore):
 
         # 2. Bulk insert new
         actions = []
-        for msg in messages:
-            doc = self._addr_to_doc(addr, msg)
+        for i, msg in enumerate(messages):
+            doc = self._addr_to_doc(addr, msg, insert_seq=i)
             actions.append({
                 "_index": self.index_name,
                 "_id": msg.id,
@@ -174,7 +177,23 @@ class ElasticsearchStore(ConversationStore):
             })
         
         if actions:
-            bulk(self.client, actions, refresh=True)
+            # Prefer elasticsearch.helpers.bulk if available, otherwise fall back to client.bulk
+            try:
+                if bulk is not None:
+                    bulk(self.client, actions, refresh=True)
+                else:
+                    # client.bulk accepts a list of actions as 'body' in newer clients
+                    self.client.bulk(body=actions, refresh=True)
+            except TypeError:
+                # Fallback: convert actions to newline-delimited bulk payload
+                payload_lines = []
+                for act in actions:
+                    # action metadata (index)
+                    meta = {"index": {"_index": act["_index"], "_id": act.get("_id")}}
+                    payload_lines.append(meta)
+                    payload_lines.append(act["_source"])
+                # client.bulk can accept a generator of lines
+                self.client.bulk(body=payload_lines, refresh=True)
 
     def delete_conversation(self, addr: MemoryAddress) -> None:
         must = self._build_filter_query(addr)

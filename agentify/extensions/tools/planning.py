@@ -61,7 +61,7 @@ class TodoTool(Tool):
                 # Re-assign IDs to keep them sequential
                 for i, t in enumerate(self._todos):
                     t["id"] = i
-                return f"Task removed. Remaining tasks re-indexed."
+                return "Task removed. Remaining tasks re-indexed."
             return f"Error: Invalid task_id {task_id}"
 
         elif action == "list":

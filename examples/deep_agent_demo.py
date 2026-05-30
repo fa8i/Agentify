@@ -55,15 +55,20 @@ def main():
     # Planning tool
     plan_tool = TodoTool()
     
+    tools = fs_tools + [plan_tool]
+
     # Sub-agent spawner
     # Note: passing memory_service so sub-agents share the same store backend (but different addresses)
     spawn_tool = SpawnAgentTool(
         base_config=config, 
         memory_service=memory_service, 
-        parent_addr=main_addr
+        parent_addr=main_addr,
+        tools=tools,
+        # pre_hooks/post_hooks and tool_pre_hooks/tool_post_hooks can be passed
+        # here if sub-agents should inherit them too.
     )
 
-    tools = fs_tools + [plan_tool, spawn_tool]
+    tools.append(spawn_tool)
 
     # 4. Initialize Agent
     agent = BaseAgent(

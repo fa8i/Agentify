@@ -64,7 +64,7 @@ class SequentialPipeline(Runnable):
             ),
             api_name="run",
             async_api_name="arun",
-        )
+        ) # type: ignore
 
     async def arun(
         self,
@@ -84,8 +84,11 @@ class SequentialPipeline(Runnable):
 
             # Determine step name for logging/memory
             step_name = getattr(step, "name", f"step_{i}")
-            if hasattr(step, "config"):
-                step_name = step.config.name
+            config = getattr(step, "config", None)
+            if config is not None:
+                cfg_name = getattr(config, "name", None)
+                if cfg_name:
+                    step_name = cfg_name
 
             response: Union[str, AsyncGenerator[str, None]]
 
@@ -97,8 +100,9 @@ class SequentialPipeline(Runnable):
                 "context": context
             }
             # Add explicit memory address for BaseAgents (legacy support within Runnable)
-            if hasattr(step, "config") and hasattr(step, "run"):
-                 run_kwargs["memory_address"] = MemoryAddress(
+            # Only create memory_address if step exposes a config and a run method
+            if getattr(step, "run", None) is not None and config is not None:
+                run_kwargs["memory_address"] = MemoryAddress(
                     user_id=user_id, conversation_id=session_id, agent_id=step_name
                 )
             

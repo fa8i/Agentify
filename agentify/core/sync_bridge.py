@@ -13,13 +13,6 @@ T = TypeVar("T")
 def has_running_loop() -> bool:
     """Return True when an event loop is currently running in this thread."""
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            return True
-    except RuntimeError:
-        pass
-
-    try:
         asyncio.get_running_loop()
         return True
     except RuntimeError:

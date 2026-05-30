@@ -2,7 +2,7 @@
 import pytest
 import asyncio
 
-from agentify.memory.interfaces import MemoryAddress, Message
+from agentify.memory.interfaces import MemoryAddress
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.memory.service import MemoryService
 from agentify.memory.async_service import AsyncMemoryService
@@ -16,6 +16,26 @@ def memory_setup():
     async_service = AsyncMemoryService(store, log_enabled=False)
     addr = MemoryAddress(user_id="test_user", conversation_id="test_conv")
     return store, sync_service, async_service, addr
+
+
+def test_replace_history_normalizes_extra_fields_sync(memory_setup):
+    """Provider-specific fields should remain metadata, not Message kwargs."""
+    store, sync_service, async_service, addr = memory_setup
+
+    sync_service.replace_history(
+        addr,
+        [
+            {"role": "system", "content": "You are helpful."},
+            {
+                "role": "assistant",
+                "content": "Thinking-aware answer",
+                "reasoning_content": "private chain data",
+            },
+        ],
+    )
+
+    history = sync_service.get_history(addr)
+    assert history[1]["reasoning_content"] == "private chain data"
 
 
 @pytest.mark.asyncio
@@ -49,6 +69,27 @@ async def test_async_reset_history(memory_setup):
     history = await async_service.get_history(addr)
     assert len(history) == 1
     assert history[0]["role"] == "system"
+
+
+@pytest.mark.asyncio
+async def test_async_replace_history_normalizes_extra_fields(memory_setup):
+    """Provider-specific fields should remain metadata, not Message kwargs."""
+    store, sync_service, async_service, addr = memory_setup
+
+    await async_service.replace_history(
+        addr,
+        [
+            {"role": "system", "content": "You are helpful."},
+            {
+                "role": "assistant",
+                "content": "Thinking-aware answer",
+                "reasoning_content": "private chain data",
+            },
+        ],
+    )
+
+    history = await async_service.get_history(addr)
+    assert history[1]["reasoning_content"] == "private chain data"
 
 
 @pytest.mark.asyncio

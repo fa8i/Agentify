@@ -4,7 +4,7 @@ from concurrent.futures import Executor
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
-from .interfaces import ConversationStore, MemoryAddress, Message
+from .interfaces import ConversationStore, MemoryAddress
 from .policies import MemoryPolicy
 from .service import MemoryService
 
@@ -120,6 +120,10 @@ class AsyncMemoryService:
     async def reset_history(self, addr: MemoryAddress, system_message: Dict[str, Any]) -> None:
         """Reset history to a single system message (async)."""
         await self._run_sync(self._sync_service.reset_history, addr, system_message)
+
+    async def replace_history(self, addr: MemoryAddress, history: List[Dict[str, Any]]) -> None:
+        """Replace all messages for the given address with the provided history (async)."""
+        await self._run_sync(self._sync_service.replace_history, addr, history)
 
     async def delete_history(self, addr: MemoryAddress) -> None:
         """Delete all messages for the given address (async)."""

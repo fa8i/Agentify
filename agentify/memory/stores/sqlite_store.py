@@ -86,7 +86,7 @@ class SQLiteStore(ConversationStore):
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
-            query = "SELECT payload FROM messages WHERE address_key = ? ORDER BY ts ASC"
+            query = "SELECT payload FROM messages WHERE address_key = ? ORDER BY ts ASC, id ASC"
             params: List[Any] = [self._addr_key(addr)]
             
             if end != -1:

@@ -40,7 +40,7 @@ async def test_schema_conversion():
         )
     ]
 
-    agentify_tools = await convert_mcp_tools_to_agentify(mock_session, mock_tools)
+    agentify_tools = convert_mcp_tools_to_agentify(mock_session, mock_tools)
 
     assert len(agentify_tools) == 1
     tool = agentify_tools[0]
@@ -57,7 +57,7 @@ async def test_tool_wrapper_calls_session():
     mock_session.call_tool.return_value = MockCallToolResult("result_value")
     mock_tools = [MockMCPTool("my_tool", "desc", {})]
 
-    agentify_tools = await convert_mcp_tools_to_agentify(mock_session, mock_tools)
+    agentify_tools = convert_mcp_tools_to_agentify(mock_session, mock_tools)
     result = await agentify_tools[0].func(param="test")
 
     mock_session.call_tool.assert_called_once_with("my_tool", arguments={"param": "test"})
@@ -74,7 +74,7 @@ async def test_multiple_tools_conversion():
         MockMCPTool("tool_c", "Description C", {}),
     ]
 
-    agentify_tools = await convert_mcp_tools_to_agentify(mock_session, mock_tools)
+    agentify_tools = convert_mcp_tools_to_agentify(mock_session, mock_tools)
 
     assert len(agentify_tools) == 3
     names = {t.name for t in agentify_tools}
@@ -87,7 +87,7 @@ async def test_empty_description_handling():
     mock_session = AsyncMock()
     mock_tools = [MockMCPTool("no_desc_tool", None, {})]
 
-    agentify_tools = await convert_mcp_tools_to_agentify(mock_session, mock_tools)
+    agentify_tools = convert_mcp_tools_to_agentify(mock_session, mock_tools)
 
     assert agentify_tools[0].schema["description"] == ""
 

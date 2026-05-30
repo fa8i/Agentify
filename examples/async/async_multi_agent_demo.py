@@ -43,9 +43,9 @@ async def async_search(query: str) -> str:
 
 async def async_summarize(text: str) -> str:
     """Simulates an async summarization task."""
-    print(f"  [async_summarize] Starting summarization...")
+    print("  [async_summarize] Starting summarization...")
     await asyncio.sleep(1)  # Simulate processing
-    print(f"  [async_summarize] Completed summarization.")
+    print("  [async_summarize] Completed summarization.")
     return f"Summary: The text discusses key points about {text[:50]}..."
 
 

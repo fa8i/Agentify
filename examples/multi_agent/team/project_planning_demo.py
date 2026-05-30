@@ -29,7 +29,7 @@ def create_planning_team():
             "- Your output should be structured and oriented to be consumed by another agent, not directly by management."
         ),
         provider="deepseek",
-        model_name="deepseek-chat",
+        model_name="deepseek-v4-flash",
         temperature=0.1,
         max_tool_iter=10,
     )
@@ -50,7 +50,7 @@ def create_planning_team():
             "- Keep the text to a maximum of ~300 words unless otherwise requested."
         ),
         provider="deepseek",
-        model_name="deepseek-chat",
+        model_name="deepseek-v4-flash",
         temperature=0.4,
     )
     writer = BaseAgent(
