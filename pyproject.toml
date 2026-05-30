@@ -48,6 +48,10 @@ dependencies = [
 # Dependencias opcionales
 [project.optional-dependencies]
 
+codex = [
+    "openai-codex>=0.1.0b1,<1.0.0",
+]
+
 # Extensiones de almacenamiento
 redis = [
     "redis>=4.0.0",

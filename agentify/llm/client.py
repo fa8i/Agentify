@@ -22,6 +22,7 @@ class LLMClientFactory:
         "anthropic",
         "llama",
         "local",
+        "codex",
     ]
 
     def __init__(self, default_timeout: int = 30):
@@ -35,6 +36,7 @@ class LLMClientFactory:
             "anthropic": self._create_anthropic_client,
             "llama": self._create_llama_client,
             "local": self._create_local_client,
+            "codex": self._create_codex_client,
         }
 
         self._async_builders: Dict[str, AsyncClientBuilder] = {
@@ -45,6 +47,7 @@ class LLMClientFactory:
             "anthropic": self._create_anthropic_client_async,
             "llama": self._create_llama_client_async,
             "local": self._create_local_client_async,
+            "codex": self._create_codex_client_async,
         }
 
     def _get_env_or_config(
@@ -143,6 +146,10 @@ class LLMClientFactory:
             azure_endpoint=azure_endpoint,
             timeout=timeout,
         )
+
+    def _create_codex_client(self, config: Dict[str, Any], timeout: int) -> Any:
+        from agentify.llm.codex_backend import CodexThreadBackend
+        return CodexThreadBackend(config=config, timeout=timeout)
 
     # -------------------------------------------------------------------------
     # Asynchronous client builders
@@ -252,6 +259,14 @@ class LLMClientFactory:
             azure_endpoint=azure_endpoint,
             timeout=timeout,
         )
+
+    def _create_codex_client_async(
+        self,
+        config: Dict[str, Any],
+        timeout: int,
+    ) -> Any:
+        from agentify.llm.codex_backend import CodexThreadBackend
+        return CodexThreadBackend(config=config, timeout=timeout)
 
     # -------------------------------------------------------------------------
     # Public factory methods

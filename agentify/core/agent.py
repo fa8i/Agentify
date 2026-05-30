@@ -551,13 +551,35 @@ class BaseAgent(Runnable):
 
         for attempt in range(self.config.max_retries):
             try:
-                if self.config.stream:
-                    return await async_client.chat.completions.create(
-                        **common_params, stream=True
+                if getattr(async_client, "is_native_thread_backend", False):
+                    last_content = common_params["messages"][-1]["content"] if common_params["messages"] else ""
+                    if isinstance(last_content, list):
+                        prompt = " ".join([c.get("text", "") for c in last_content if c.get("type") == "text"])
+                    else:
+                        prompt = last_content
+                    session_id_str = getattr(addr, "session_id", str(addr))
+                    
+                    if self.config.stream:
+                        return await async_client.run_native(
+                            session_id=session_id_str,
+                            prompt=prompt,
+                            stream=True,
+                            **common_params
+                        )
+                    response = await async_client.run_native(
+                        session_id=session_id_str,
+                        prompt=prompt,
+                        stream=False,
+                        **common_params
                     )
-                response = await async_client.chat.completions.create(
-                    **common_params, stream=False
-                )
+                else:
+                    if self.config.stream:
+                        return await async_client.chat.completions.create(
+                            **common_params, stream=True
+                        )
+                    response = await async_client.chat.completions.create(
+                        **common_params, stream=False
+                    )
 
                 for cb in self.callbacks:
                     cb.on_llm_end(response)
