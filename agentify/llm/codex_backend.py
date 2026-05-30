@@ -26,33 +26,65 @@ class DummyResponse:
 
 class CodexThreadBackend:
     """
-    Native Codex Thread Backend mapping agentify sessions to codex threads.
+    Native Codex Thread Backend mapping agentify sessions to persistent codex thread IDs.
+
+    Stores ``agentify_session_id → codex_thread_id`` (a plain string) rather than
+    holding the live ``AsyncThread`` object.  On every call the backend either:
+
+    * **Starts** a new thread (first interaction for a session), or
+    * **Resumes** an existing thread via ``codex.thread_resume(thread_id)``.
+
+    This means sessions survive process restarts as long as the mapping is
+    preserved (in-memory dict by default; can be backed by any persistent store).
     """
     is_native_thread_backend = True
 
     def __init__(self, config: Dict[str, Any], timeout: int):
         if AsyncCodex is None:
-            raise ImportError("openai-codex is not installed. Please install it with `pip install agentify-core[codex]`.")
+            raise ImportError(
+                "openai-codex is not installed. "
+                "Please install it with `pip install agentify-core[codex]`."
+            )
         self.config = config
         self.timeout = timeout
-        self.threads = {}
+
+        # agentify_session_id → codex_thread_id (string, not the live object)
+        self.thread_ids: Dict[str, str] = {}
+
         import shutil
         import os
+
         codex_path = shutil.which("codex")
         if not codex_path:
             # Fallback for common global install paths
             common_paths = [
                 os.path.expanduser("~/.npm-global/bin/codex"),
-                os.path.expanduser("~/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex"),
-                os.path.expanduser("~/.vscode/extensions/openai.chatgpt-26.5527.31454-linux-x64/bin/linux-x86_64/codex")
+                os.path.expanduser(
+                    "~/.npm-global/lib/node_modules/@openai/codex/"
+                    "node_modules/@openai/codex-linux-x64/vendor/"
+                    "x86_64-unknown-linux-musl/codex/codex"
+                ),
             ]
+            # Dynamically discover VSCode extension binaries
+            vscode_ext_dir = os.path.expanduser("~/.vscode/extensions")
+            if os.path.isdir(vscode_ext_dir):
+                for entry in sorted(os.listdir(vscode_ext_dir), reverse=True):
+                    if entry.startswith("openai.chatgpt-"):
+                        candidate = os.path.join(
+                            vscode_ext_dir, entry, "bin", "linux-x86_64", "codex"
+                        )
+                        common_paths.append(candidate)
+
             for p in common_paths:
                 if os.path.exists(p) and os.access(p, os.X_OK):
                     codex_path = p
                     break
-                    
+
         if not codex_path:
-            logger.warning("No global 'codex' executable found in PATH. AsyncCodex might fail to start if openai-codex-cli-bin is missing.")
+            logger.warning(
+                "No global 'codex' executable found in PATH. "
+                "AsyncCodex might fail to start if openai-codex-cli-bin is missing."
+            )
             self.codex = AsyncCodex()
         else:
             try:
@@ -61,28 +93,60 @@ class CodexThreadBackend:
             except ImportError:
                 self.codex = AsyncCodex()
 
-    async def run_native(self, session_id: str, model: str, prompt: str, stream: bool = False, **kwargs) -> Any:
-        if session_id not in self.threads:
-            self.threads[session_id] = await self.codex.thread_start(model=model)
-        
-        thread = self.threads[session_id]
-        
-        # Tools and other kwargs can be passed here if the SDK supports them
-        # For now, we assume simple text generation
+    # ------------------------------------------------------------------
+    # Thread lifecycle helpers
+    # ------------------------------------------------------------------
+
+    async def _get_or_create_thread(self, session_id: str, model: str):
+        """Return a live AsyncThread, creating or resuming as needed."""
+        thread_id = self.thread_ids.get(session_id)
+
+        if thread_id is not None:
+            # Resume an existing Codex thread by its persisted ID
+            logger.debug("Resuming Codex thread %s for session %s", thread_id, session_id)
+            thread = await self.codex.thread_resume(thread_id, model=model)
+        else:
+            # First interaction — start a brand-new thread
+            logger.debug("Starting new Codex thread for session %s", session_id)
+            thread = await self.codex.thread_start(model=model)
+            self.thread_ids[session_id] = thread.id
+            logger.info(
+                "Mapped session %s → codex thread %s", session_id, thread.id
+            )
+
+        return thread
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def run_native(
+        self,
+        session_id: str,
+        model: str,
+        prompt: str,
+        stream: bool = False,
+        **kwargs,
+    ) -> Any:
+        """Send *only* the latest prompt to the Codex thread for this session."""
+        thread = await self._get_or_create_thread(session_id, model)
+
         try:
             result = await thread.run(prompt)
         except AttributeError:
-            logger.error("Codex Thread object does not have 'run' method. SDK might have changed.")
+            logger.error(
+                "Codex Thread object does not have 'run' method. "
+                "SDK might have changed."
+            )
             raise
 
         response_content = getattr(result, "final_response", str(result))
-        
-        # If stream is requested, we yield a single chunk for simplicity unless the SDK exposes a stream generator
+
         if stream:
             async def stream_generator():
                 yield DummyResponse(response_content)
             return stream_generator()
-            
+
         return DummyResponse(response_content)
 
     # Fallback Adapter interface
