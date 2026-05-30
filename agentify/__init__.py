@@ -8,10 +8,11 @@ from agentify.llm.client import LLMClientFactory
 
 # Memory exports
 from agentify.memory.service import MemoryService
+from agentify.memory.async_service import AsyncMemoryService
 from agentify.memory.interfaces import MemoryAddress
 from agentify.memory.policies import MemoryPolicy
 
-__version__ = "0.4.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "BaseAgent",
@@ -20,6 +21,7 @@ __all__ = [
     "tool",
     "LLMClientFactory",
     "MemoryService",
+    "AsyncMemoryService",
     "MemoryAddress",
     "MemoryPolicy",
     "ImageConfig",

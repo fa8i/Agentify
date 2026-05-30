@@ -1,6 +1,5 @@
 from __future__ import annotations
 import logging
-import os
 from typing import Any, Dict, List, Optional
 from .interfaces import ConversationStore, MemoryAddress, Message
 from .policies import MemoryPolicy
@@ -129,6 +128,13 @@ class MemoryService:
         """Replace history with a single system message for the given address."""
         msg = Message(**system_message)
         self.store.replace_messages(addr, [msg])
+        if self.policy.ttl:
+            self.store.set_ttl(addr, self.policy.ttl)
+
+    def replace_history(self, addr: MemoryAddress, history: List[Dict[str, Any]]) -> None:
+        """Replace all messages for the given address with the provided history."""
+        messages = [self._normalize_message(msg) for msg in history]
+        self.store.replace_messages(addr, messages)
         if self.policy.ttl:
             self.store.set_ttl(addr, self.policy.ttl)
 

@@ -59,7 +59,7 @@ class HierarchicalTeam(Runnable):
             ),
             api_name="run",
             async_api_name="arun",
-        )
+        ) # type: ignore
 
     async def arun(
         self,
@@ -101,8 +101,9 @@ class HierarchicalTeam(Runnable):
                 else:
                     # Handle Flows (Team, Pipeline, etc)
                     child_name = getattr(child, "name", f"Team_{id(child)}")
-                    if hasattr(child, "config"):
-                        child_name = child.config.name
+                    child_config = getattr(child, "config", None)
+                    if child_config is not None:
+                        child_name = getattr(child_config, "name", child_name)
 
                     child_desc = getattr(
                         child, "description", f"Delegate to {child_name}"

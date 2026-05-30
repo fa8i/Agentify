@@ -23,7 +23,7 @@ class AgentConfig:
     stream: bool = False
     max_retries: int = 3
     verbose: bool = True
-    max_tool_iter: Optional[int] = 10
+    max_tool_iter: Optional[int] = 25
     delegation_recovery_enabled: bool = True
     delegation_recovery_mode: str = "retry_isolated"
     delegation_max_retries: int = 1

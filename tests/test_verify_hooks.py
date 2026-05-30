@@ -1,7 +1,7 @@
 import sys
 import os
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import cast
 from unittest.mock import MagicMock, AsyncMock
 
 # Add the project root to the python path
@@ -12,7 +12,7 @@ from agentify.core.config import AgentConfig
 from agentify.memory.service import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.memory.interfaces import MemoryAddress
-from agentify.llm.client import LLMClientFactory
+from agentify.llm.client import LLMClientFactory, LLMClientType, AsyncLLMClientType
 
 # Mock LLM Client
 class MockLLMClient:
@@ -23,17 +23,17 @@ class MockLLMClient:
         )
 
 class MockFactory(LLMClientFactory):
-    def create_client(self, *args, **kwargs):
-        return MockLLMClient()
+    def create_client(self, *args, **kwargs) -> LLMClientType:
+        return cast(LLMClientType, MockLLMClient())
 
-    def create_async_client(self, *args, **kwargs):
+    def create_async_client(self, *args, **kwargs) -> AsyncLLMClientType:
         client = MockLLMClient()
         client.chat.completions.create = AsyncMock(
             return_value=MagicMock(
                 choices=[MagicMock(message=MagicMock(content="Hello from Mock LLM", tool_calls=None))]
             )
         )
-        return client
+        return cast(AsyncLLMClientType, client)
 
 # --- Hooks with different signatures ---
 
@@ -56,8 +56,8 @@ async def main():
     config = AgentConfig(
         name="SmartAgent",
         system_prompt="You are a smart agent.",
-        provider="openai",
-        model_name="gpt-4o",
+        provider="deepseek",
+        model_name="deepseek-v4-flash",
     )
     memory = MemoryService(store=InMemoryStore())
     addr = MemoryAddress(conversation_id="test-smart-hooks")

@@ -4,7 +4,6 @@ import os
 import sys
 from dotenv import load_dotenv
 
-load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agentify.mcp import MCPConnection
@@ -13,6 +12,8 @@ from agentify.core.config import AgentConfig
 from agentify.memory.service import MemoryService
 from agentify.memory.stores.in_memory_store import InMemoryStore
 from agentify.memory.interfaces import MemoryAddress
+
+load_dotenv()
 
 
 async def main():

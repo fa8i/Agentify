@@ -4,16 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentify-core"
-version = "0.4.0"
+version = "0.4.1"
 description = "Framework-agnostic AI agent library for building single and multi-agent systems"
 readme = "README_PYPI.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Fabian M"},
-    {email = "fabianmp_98@hotmail.com"}
+    {name = "Fabian M", email = "fabianmp_98@hotmail.com"}
 ]
-keywords = ["agentify", "agentify-core","agent", "multi-agent", "ai", "llm", "openai", "framework"]
+keywords = [
+    "agentify",
+    "agentify-core",
+    "agent",
+    "multi-agent",
+    "ai",
+    "llm",
+    "openai",
+    "framework",
+    "mcp",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -33,14 +42,17 @@ dependencies = [
     "python-dotenv",
     "Pillow",
     "jsonschema>=4.0.0",
+    "mcp",
 ]
 
 # Dependencias opcionales
 [project.optional-dependencies]
+
 # Extensiones de almacenamiento
 redis = [
     "redis>=4.0.0",
 ]
+
 elastic = [
     "elasticsearch>=8.0.0",
 ]
@@ -48,11 +60,6 @@ elastic = [
 # Herramientas de extensión
 tools = [
     "requests>=2.25.0",
-]
-
-# Model Context Protocol
-mcp = [
-    "mcp",
 ]
 
 # UI y demos
@@ -66,7 +73,6 @@ all = [
     "elasticsearch>=8.0.0",
     "requests>=2.25.0",
     "gradio==5.49.1",
-    "mcp",
 ]
 
 # Desarrollo y testing
@@ -94,7 +100,7 @@ agentify = ["py.typed"]
 
 [tool.black]
 line-length = 100
-target-version = ['py310', 'py311']
+target-version = ["py310", "py311", "py312"]
 
 [tool.mypy]
 python_version = "3.10"

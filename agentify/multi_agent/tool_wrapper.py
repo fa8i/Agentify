@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Protocol, Union, AsyncGenerator, Generator
+from typing import Any, Dict, Optional, Protocol, Union, AsyncGenerator, Generator, List, Callable
 import hashlib
 import asyncio
 import logging
@@ -96,7 +96,7 @@ class AgentTool(Tool):
         base_addr = self._build_child_addr()
 
         try:
-            return self.agent.run(user_input=instructions, addr=base_addr)
+            return self.agent.run(user_input=instructions, addr=base_addr) # type: ignore
         except Exception as exc:
             if not self._should_use_isolated_recovery(exc):
                 logger.error(
@@ -122,7 +122,7 @@ class AgentTool(Tool):
                     if delay > 0:
                         time.sleep(delay)
                     recovery_addr = self._build_recovery_addr(instructions)
-                    return self.agent.run(user_input=instructions, addr=recovery_addr)
+                    return self.agent.run(user_input=instructions, addr=recovery_addr) # type: ignore
                 except Exception:
                     if attempt == retries - 1:
                         logger.error(
@@ -204,11 +204,11 @@ class AgentTool(Tool):
         # Consume async generator if needed
         if hasattr(response, "__aiter__"):
             parts = []
-            async for chunk in response:
+            async for chunk in response: # type: ignore
                 parts.append(chunk)
             response = "".join(parts)
         elif hasattr(response, "__iter__") and not isinstance(response, str):
-            response = "".join(list(response))
+            response = "".join(list(response)) # type: ignore
 
         return {"response": response}
 
@@ -306,11 +306,21 @@ class SpawnAgentTool(Tool):
         memory_service: Any, # MemoryService
         parent_addr: MemoryAddress,
         client_factory: Optional[Any] = None,
+        tools: Optional[List[Tool]] = None,
+        pre_hooks: Optional[List[Callable]] = None,
+        post_hooks: Optional[List[Callable]] = None,
+        tool_pre_hooks: Optional[List[Callable]] = None,
+        tool_post_hooks: Optional[List[Callable]] = None,
     ):
         self.base_config = base_config
         self.memory_service = memory_service
         self.parent_addr = parent_addr
         self.client_factory = client_factory
+        self.tools = tools
+        self.pre_hooks = pre_hooks
+        self.post_hooks = post_hooks
+        self.tool_pre_hooks = tool_pre_hooks
+        self.tool_post_hooks = tool_post_hooks
 
         schema = {
             "name": "spawn_subagent",
@@ -365,6 +375,11 @@ class SpawnAgentTool(Tool):
             memory=self.memory_service,
             memory_address=child_addr,
             client_factory=self.client_factory,
+            tools=list(self.tools) if self.tools is not None else None,
+            pre_hooks=list(self.pre_hooks) if self.pre_hooks is not None else None,
+            post_hooks=list(self.post_hooks) if self.post_hooks is not None else None,
+            tool_pre_hooks=list(self.tool_pre_hooks) if self.tool_pre_hooks is not None else None,
+            tool_post_hooks=list(self.tool_post_hooks) if self.tool_post_hooks is not None else None,
         )
 
         response = sub_agent.run(user_input=instructions)
@@ -404,7 +419,12 @@ class SpawnAgentTool(Tool):
             config=new_config,
             memory=self.memory_service,
             memory_address=child_addr,
-            client_factory=self.client_factory
+            client_factory=self.client_factory,
+            tools=list(self.tools) if self.tools is not None else None,
+            pre_hooks=list(self.pre_hooks) if self.pre_hooks is not None else None,
+            post_hooks=list(self.post_hooks) if self.post_hooks is not None else None,
+            tool_pre_hooks=list(self.tool_pre_hooks) if self.tool_pre_hooks is not None else None,
+            tool_post_hooks=list(self.tool_post_hooks) if self.tool_post_hooks is not None else None,
         )
 
         response = await sub_agent.arun(user_input=instructions)
@@ -412,11 +432,11 @@ class SpawnAgentTool(Tool):
         # Consume async generator if needed
         if hasattr(response, "__aiter__"):
             parts = []
-            async for chunk in response:
+            async for chunk in response: # type: ignore
                 parts.append(chunk)
             response = "".join(parts)
         elif hasattr(response, "__iter__") and not isinstance(response, str):
-            response = "".join(list(response))
+            response = "".join(list(response)) # type: ignore
 
         return {
             "subagent": role_name,

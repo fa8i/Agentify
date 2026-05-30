@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-05-30
+
+### Added
+- **Tool Hooks System**: New `tool_pre_hooks` and `tool_post_hooks` in `BaseAgent` for executing custom logic before and after tool execution.
+- **SpawnAgentTool Enhancements**: Support for passing `tools`, `pre_hooks`, `post_hooks`, `tool_pre_hooks`, and `tool_post_hooks` to spawned sub-agents.
+- **MCP Tool Name Validation**: New `_safe_function_name()` function to safely convert MCP tool names into valid Python identifiers.
+
+### Changed
+- **MCP Adapter**: `convert_mcp_tools_to_agentify()` is now synchronous (no longer async) with improved error handling and null-coalescing for `inputSchema`.
+- **Shell Safe Tool**: Removed restrictive allowlist; now accepts any shell command with configurable timeout (increased from 60s to 1800s max).
+- **System Message Integrity**: Enhanced `_aensure_system_initialized()` to verify system message position and eliminate duplicates in conversation history.
+- **Type Hints Modernization**: Updated type aliases to use modern `TypeAlias` syntax and PEP 604 union operator (`|`) instead of `Union`.
+- **LLM Client Factory**: Added support for new provider "llama" alongside existing providers.
+
+### Fixed
+- **Event Loop Detection**: Simplified `has_running_loop()` to use `asyncio.get_running_loop()`, eliminating DeprecationWarning on Python 3.10+.
+- **MCP Tests**: Fixed async/await mismatch in test cases for `convert_mcp_tools_to_agentify()`.
+- **Tool Execution Rollback**: New `_arollback_last_tool_turn()` method to recover from interrupted tool execution sequences.
+
 ## [0.4.0] - 2026-04-18
 
 ### Added

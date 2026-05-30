@@ -1,4 +1,3 @@
-from __future__ import annotations
 import asyncio
 import contextvars
 import json
@@ -10,7 +9,11 @@ from typing import Any, Dict, Generator, List, Optional, Union, Callable, AsyncG
 
 from agentify.core.runnable import Runnable
 
-from openai import RateLimitError
+try:
+    from openai import RateLimitError
+except ModuleNotFoundError:  # pragma: no cover - optional provider dependency
+    class RateLimitError(Exception):
+        pass
 from jsonschema import validate, ValidationError
 
 from agentify.core.tool import Tool
@@ -44,6 +47,8 @@ class BaseAgent(Runnable):
         image_config: Optional[ImageConfig] = None,
         pre_hooks: Optional[List[Callable]] = None,
         post_hooks: Optional[List[Callable]] = None,
+        tool_pre_hooks: Optional[List[Callable]] = None,
+        tool_post_hooks: Optional[List[Callable]] = None,
     ) -> None:
         self.config = config
         self.memory = memory
@@ -51,6 +56,8 @@ class BaseAgent(Runnable):
         self.image_config = image_config or ImageConfig()
         self.pre_hooks = pre_hooks or []
         self.post_hooks = post_hooks or []
+        self.tool_pre_hooks = tool_pre_hooks or []
+        self.tool_post_hooks = tool_post_hooks or []
 
         # Decouple callbacks from config to avoid mutation of shared config
         self.callbacks = list(self.config.callbacks) if self.config.callbacks else []
@@ -60,23 +67,16 @@ class BaseAgent(Runnable):
         self._tools: Dict[str, Tool] = {t.name: t for t in tools or []}
 
         self._factory = client_factory or LLMClientFactory()
-        self._client: Optional[LLMClientType] = None
+        self.client: LLMClientType = self._factory.create_client(
+            provider=self.config.provider,
+            config_override=self.config.client_config_override,
+            timeout=self.config.timeout,
+        )
         # Async client is created lazily on first arun() call
         self._async_client: Optional[AsyncLLMClientType] = None
         
         # Auto-wrap memory for async operations (transparent to user)
         self._async_memory = AsyncMemoryService.from_sync(memory)
-
-    @property
-    def client(self) -> LLMClientType:
-        """Lazily create and return the sync client."""
-        if self._client is None:
-            self._client = self._factory.create_client(
-                provider=self.config.provider,
-                config_override=self.config.client_config_override,
-                timeout=self.config.timeout,
-            )
-        return self._client
 
     @property
     def tool_defs(self) -> List[Dict[str, Any]]:
@@ -147,12 +147,58 @@ class BaseAgent(Runnable):
     # Async memory helpers (for async loop)
     
     async def _aensure_system_initialized(self, addr: MemoryAddress) -> None:
-        """Async version: ensure system message is present (non-blocking)."""
+        """Async version: ensure system message is present and correct (non-blocking)."""
         history = await self._async_memory.get_history(addr)
-        if not history or history[0].get("role") != "system":
+        
+        if not history:
             await self._async_memory.append_history(
                 addr, {"role": "system", "content": self.config.system_prompt}
             )
+            return
+
+        is_first_correct = (
+            history[0].get("role") == "system"
+            and history[0].get("content") == self.config.system_prompt
+        )
+        has_duplicates = sum(
+            1 for m in history 
+            if m.get("role") == "system" and m.get("content") == self.config.system_prompt
+        ) > 1
+
+        if not is_first_correct or has_duplicates:
+            new_history = [{"role": "system", "content": self.config.system_prompt}]
+            for m in history:
+                if m.get("role") == "system" and m.get("content") == self.config.system_prompt:
+                    continue
+                if m is history[0] and m.get("role") == "system":
+                    continue
+                new_history.append(m)
+            
+            await self._async_memory.replace_history(addr, new_history)
+
+    async def _arollback_last_tool_turn(self, addr: MemoryAddress, tool_message_count: int) -> None:
+        """Rollback assistant/tool messages from the last tool iteration.
+
+        This is used when execution is interrupted (for example permission challenge)
+        so the next retry does not inherit partial tool-call state.
+        """
+        if tool_message_count <= 0:
+            return
+        history = await self._async_memory.get_history(addr)
+        remove_count = 1 + tool_message_count  # assistant tool_call message + tool messages
+        if len(history) <= 1 or len(history) <= remove_count:
+            return
+
+        kept = history[:-remove_count]
+        if not kept:
+            return
+
+        first = kept[0]
+        if first.get("role") != "system":
+            first = {"role": "system", "content": self.config.system_prompt}
+            kept = [first] + kept
+
+        await self._async_memory.replace_history(addr, kept)
 
     async def _aadd(
         self,
@@ -445,6 +491,7 @@ class BaseAgent(Runnable):
             addr=a,
             image_path=image_path,
             image_detail_override=image_detail_override,
+            input_role=str(kwargs.get("input_role", "user")),
         )
 
         if self.config.stream:
@@ -581,6 +628,14 @@ class BaseAgent(Runnable):
 
         try:
             self._validate_tool_arguments(tool, arguments)
+            for hook in self.tool_pre_hooks:
+                self._execute_hook(
+                    hook,
+                    agent=self,
+                    tool=tool,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                )
             # Check for async_func attribute (used by AgentTool, FlowTool, SpawnAgentTool)
             if hasattr(tool, "async_func") and asyncio.iscoroutinefunction(tool.async_func):
                 result = await tool.async_func(**arguments)
@@ -594,10 +649,28 @@ class BaseAgent(Runnable):
                     None, lambda: current_ctx.run(tool, **arguments)
                 )
             result_str = self._serialize_tool_result(result)
+            for hook in self.tool_post_hooks:
+                self._execute_hook(
+                    hook,
+                    agent=self,
+                    tool=tool,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result=result_str,
+                )
             for cb in self.callbacks:
                 cb.on_tool_finish(tool_name, result_str)
             return result_str
         except Exception as e:
+            for hook in self.tool_post_hooks:
+                self._execute_hook(
+                    hook,
+                    agent=self,
+                    tool=tool,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    error=e,
+                )
             for cb in self.callbacks:
                 cb.on_error(e, f"Tool execution: {tool_name}")
             logger.error(
@@ -617,6 +690,7 @@ class BaseAgent(Runnable):
         tool_call_assembler: Dict[int, Dict[str, Any]] = {}
         full_content = []
         full_reasoning = []
+        has_reasoning_attr = False
 
         async for chunk in response_stream:
             if not chunk.choices:
@@ -630,10 +704,12 @@ class BaseAgent(Runnable):
                 yield delta.content
 
             # Handle reasoning content if present
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                for cb in self.callbacks:
-                    cb.on_reasoning_step(delta.reasoning_content)
-                full_reasoning.append(delta.reasoning_content)
+            if hasattr(delta, "reasoning_content"):
+                has_reasoning_attr = True
+                if delta.reasoning_content:
+                    for cb in self.callbacks:
+                        cb.on_reasoning_step(delta.reasoning_content)
+                    full_reasoning.append(delta.reasoning_content)
 
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
@@ -671,7 +747,7 @@ class BaseAgent(Runnable):
             if call_data.get("function", {}).get("name"):
                 self._last_stream_tool_calls.append(call_data)
         
-        self._last_stream_reasoning = "".join(full_reasoning)
+        self._last_stream_reasoning = "".join(full_reasoning) if has_reasoning_attr else None
 
     async def _aexecute_agent_loop(
         self,
@@ -680,6 +756,7 @@ class BaseAgent(Runnable):
         addr: MemoryAddress,
         image_path: Optional[str] = None,
         image_detail_override: Optional[str] = None,
+        input_role: str = "user",
     ) -> AsyncGenerator[str, None]:
         """Async version of the agent loop with parallel tool execution."""
         await self._aensure_system_initialized(addr)
@@ -696,13 +773,15 @@ class BaseAgent(Runnable):
             image_detail_override=image_detail_override,
         )
         if user_content is not None:
-            await self._aadd(role="user", content=user_content, addr=addr)
+            await self._aadd(role=input_role, content=user_content, addr=addr)
 
         accumulated_response: List[str] = []
 
         iteration_count = 0
+        reached_max_iter = False
         while True:
             if self.config.max_tool_iter is not None and iteration_count >= self.config.max_tool_iter:
+                reached_max_iter = True
                 break
             iteration_count += 1
 
@@ -737,8 +816,16 @@ class BaseAgent(Runnable):
             # Exit if no tool calls are present
             if not assembled_tool_calls:
                 msg_kwargs = {}
-                if full_reasoning_content:
+                if full_reasoning_content is not None:
                     msg_kwargs["metadata"] = {"reasoning_content": full_reasoning_content}
+                    if self.config.stream:
+                        yield "\x1eagentify_event:" + json.dumps(
+                            {
+                                "type": "reasoning_full",
+                                "text": full_reasoning_content,
+                            },
+                            ensure_ascii=False,
+                        ) + "\x1e"
                 
                 await self._aadd(role="assistant", content=full_turn_content, addr=addr, **msg_kwargs)
                 for cb in self.callbacks:
@@ -750,13 +837,33 @@ class BaseAgent(Runnable):
             if full_turn_content:
                 assistant_msg["content"] = full_turn_content
             assistant_msg["tool_calls"] = assembled_tool_calls
-            if full_reasoning_content:
+            if full_reasoning_content is not None:
                 assistant_msg["metadata"] = {"reasoning_content": full_reasoning_content}
+
+            tool_names = [
+                str(tc.get("function", {}).get("name", "")).strip()
+                for tc in assembled_tool_calls
+                if str(tc.get("function", {}).get("name", "")).strip()
+            ]
+            for cb in self.callbacks:
+                cb_func = getattr(cb, "on_assistant_tool_intent", None)
+                if callable(cb_func):
+                    cb_func(self.config.name, full_turn_content, tool_names)
+            if self.config.stream and tool_names:
+                yield "\x1eagentify_event:" + json.dumps(
+                    {
+                        "type": "assistant_with_tools",
+                        "content": full_turn_content or "",
+                        "tools": ", ".join(tool_names),
+                        "reasoning": full_reasoning_content or "",
+                    },
+                    ensure_ascii=False,
+                ) + "\x1e"
             
             await self._aadd(addr=addr, **assistant_msg)
 
             # Execute tools IN PARALLEL using asyncio.gather
-            async def execute_single_tool(tc: Dict[str, Any]) -> tuple[str, str, str]:
+            async def execute_single_tool(tc: Dict[str, Any]) -> tuple[str, str, str, Optional[BaseException]]:
                 tool_name = tc["function"]["name"]
                 tool_call_id = tc["id"]
                 args_str = tc["function"]["arguments"]
@@ -776,16 +883,33 @@ class BaseAgent(Runnable):
                             )
                         }
                     )
+                    return tool_call_id, tool_name, result_content, None
                 except ValueError as e:
                     result_content = json.dumps({"error": str(e)})
-                return tool_call_id, tool_name, result_content
+                    return tool_call_id, tool_name, result_content, None
+                except BaseException as e:
+                    scope = getattr(e, "scope", None)
+                    reason = getattr(e, "reason", str(e))
+                    if isinstance(scope, str) and scope:
+                        result_content = json.dumps(
+                            {
+                                "ok": False,
+                                "error": reason,
+                                "scope": scope,
+                                "interrupted": True,
+                            }
+                        )
+                        return tool_call_id, tool_name, result_content, e
+                    raise
+                return tool_call_id, tool_name, result_content, None
 
             tool_results = await asyncio.gather(
                 *[execute_single_tool(tc) for tc in assembled_tool_calls]
             )
 
             # Add tool results to memory
-            for tool_call_id, tool_name, result_content in tool_results:
+            interrupt_signal: Optional[BaseException] = None
+            for tool_call_id, tool_name, result_content, signal in tool_results:
                 await self._aadd(
                     role="tool",
                     content=result_content,
@@ -793,7 +917,12 @@ class BaseAgent(Runnable):
                     name=tool_name,
                     addr=addr,
                 )
-        else:
+                if interrupt_signal is None and signal is not None:
+                    interrupt_signal = signal
+            if interrupt_signal is not None:
+                await self._arollback_last_tool_turn(addr, len(tool_results))
+                raise interrupt_signal
+        if reached_max_iter:
             warn_msg = f"\n[WARNING] Agent '{self.config.name}' reached max iterations ({self.config.max_tool_iter}).\n"
             logger.warning(warn_msg.strip())
             for cb in self.callbacks:

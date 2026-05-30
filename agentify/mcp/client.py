@@ -98,10 +98,14 @@ class MCPConnection(AbstractAsyncContextManager):
         self._exit_stack = AsyncExitStack()
         try:
             if self._transport == _Transport.STDIO:
+                if self._stdio_params is None:
+                    raise RuntimeError("StdIO parameters not configured.")
                 read, write = await self._exit_stack.enter_async_context(
                     stdio_client(self._stdio_params)
                 )
             elif self._transport == _Transport.SSE:
+                if self._sse_url is None:
+                    raise RuntimeError("SSE URL not configured.")
                 read, write = await self._exit_stack.enter_async_context(
                     sse_client(
                         url=self._sse_url,
