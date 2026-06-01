@@ -372,6 +372,186 @@ config = AgentConfig(
 )
 ```
 
+### Codex Native Provider
+
+The `codex` provider uses ChatGPT OAuth via `codex login` and native Codex
+threads. It sends the latest Agentify prompt string to a native Codex thread and
+lets Codex maintain thread context.
+
+```python
+config = AgentConfig(
+    provider="codex",
+    model_name="gpt-5.3-codex"
+)
+```
+
+The model is always taken from `AgentConfig.model_name`. In the real validation
+environment, `gpt-5.3-codex` worked. Other models can fail depending on Codex
+CLI version, ChatGPT account type, and quota.
+
+Supported:
+
+- ChatGPT OAuth through the Codex CLI
+- Native Codex threads
+- Persistent context per Codex thread
+- Plain string prompts sent to native Codex turns
+- Agentify tools exposed via MCP stdio
+
+Not supported:
+
+- OpenAI-style `tool_calls`
+- Agentify's classic OpenAI-style tool loop
+- Real streaming
+
+Use `provider="openai"` for agents that need OpenAI-style function calling.
+For Codex, tools must be exposed through MCP. Codex decides and invokes those
+tools internally; it does not return `assistant_message.tool_calls` to Agentify.
+Agentify reconstructs the final answer from `thread.turn(...).stream()` events.
+
+Agentify provides a transport-agnostic `AgentifyMCPServer` adapter that converts
+registered Agentify tools into MCP tool definitions and handlers. Wire this
+adapter into a local MCP transport, then configure Codex to load that MCP server
+from its Codex MCP configuration.
+
+First define an importable registry that returns the tools for the current
+agent/scope:
+
+```python
+# my_project/tools.py
+from agentify.core.tool import tool
+
+@tool
+def echo_tool(text: str) -> str:
+    """Echo text back to the caller."""
+    return f"echo: {text}"
+
+def build_agentify_tools():
+    return [echo_tool]
+```
+
+Generate the Codex MCP config block:
+
+```bash
+agentify codex mcp config \
+  --name agentify-my-agent \
+  --registry my_project.tools:build_agentify_tools \
+  --allow echo_tool \
+  --command /absolute/path/to/.venv/bin/python
+```
+
+Add the generated block to `~/.codex/config.toml` for the first version. Global
+configuration is the recommended path initially because project-scoped
+`.codex/config.toml` can behave differently across Codex CLI, Desktop, and IDE
+surfaces.
+
+Equivalent manual config:
+
+```toml
+[mcp_servers.agentify-my-agent]
+command = "python"
+args = [
+  "-m", "agentify.mcp.server",
+  "--registry", "my_project.tools:build_agentify_tools",
+  "--allow", "echo_tool"
+]
+enabled_tools = ["echo_tool"]
+```
+
+Manual verification:
+
+- Run `codex login` if needed.
+- Add the config block to `~/.codex/config.toml`.
+- Start Codex and ask it to call `echo_tool` with a short string.
+- Confirm the MCP tool result returns `echo: <your string>`.
+
+#### Codex MCP end-to-end validation
+
+The repository includes a manual validation script for the full flow:
+
+```text
+Agentify provider="codex"
+  -> CodexThreadBackend
+  -> openai-codex SDK
+  -> thread.turn(prompt).stream()
+  -> Codex MCP config
+  -> Agentify MCP stdio server
+  -> echo_tool
+```
+
+Run it from the project root after `codex login`:
+
+```bash
+.venv/bin/python scripts/manual_codex_mcp_e2e.py
+```
+
+To validate the complete Agentify runtime with `BaseAgent(provider="codex")`, run:
+
+```bash
+.venv/bin/python scripts/manual_codex_agentify_e2e.py --model gpt-5.3-codex
+```
+
+This script verifies both the BaseAgent response and the Agentify MCP debug log.
+The expected success marker is `ECHO_FROM_AGENTIFY: hola-agentify` and the log
+must show `call_tool called: echo_tool`.
+
+The script:
+
+- Creates a temporary backup of `~/.codex/config.toml`.
+- Appends a temporary `[mcp_servers.agentify-e2e]` block using the absolute
+  Python executable running the script.
+- Starts Codex through `CodexThreadBackend` and asks it to call `echo_tool`.
+- Verifies the response contains `ECHO_FROM_AGENTIFY: hola-agentify`.
+- Restores the original Codex config before exit unless `--keep-config` is used.
+
+Exit codes:
+
+- `0`: Codex invoked the MCP tool and returned the expected marker.
+- `1`: Codex returned a final response, but it did not contain the expected marker.
+- `3`: The Agentify MCP debug log shows `echo_tool` was invoked, but the
+  `openai-codex` SDK turn result did not expose a final response containing the
+  tool output.
+
+Agentify uses the Codex turn event stream (`thread.turn(...).stream()`) for the
+native Codex provider because the convenience `thread.run(prompt)` API can
+collapse MCP turns into `TurnResult(final_response=None, items=[])`. The event
+stream exposes `item/agentMessage/delta`, `item/completed` for MCP calls, and
+`turn/completed`, which is enough to reconstruct a usable response.
+
+If an installed `openai-codex` SDK does not expose `thread.turn`, Agentify only
+falls back to `thread.run()` when MCP tools are explicitly disabled through the
+backend config. MCP-backed tools require event streaming.
+
+Current diagnostic status:
+
+- MCP server loaded: yes
+- MCP tools invoked: yes
+- MCP output visible in events: yes
+- `thread.run(prompt).final_response` reliable for MCP turns: no
+
+Alternative dynamic tools route:
+
+- Route A, MCP external: Codex loads `AgentifyMCPServer` from Codex config and
+  Agentify reconstructs the final response from Codex turn events. This is the
+  implemented route.
+- Route B, dynamic tools: the installed `openai-codex` SDK advertises
+  `experimentalApi=True` internally, but its public Python API currently exposes
+  no client methods for registering dynamic tools or responding to dynamic tool
+  calls directly. This route is not implemented.
+
+Debug logs from the Agentify MCP subprocess are written to
+`/tmp/agentify-codex-mcp-e2e.log` by default. The stdio server also supports
+manual logging with:
+
+```bash
+python -m agentify.mcp.server \
+  --registry tests.fixtures.codex_mcp_registry:build_agentify_tools \
+  --allow echo_tool \
+  --debug-log /tmp/agentify-mcp.log
+```
+
+This manual E2E is intentionally not part of CI because it requires local
+`codex login` authentication and a ChatGPT account with Codex access.
+
 ## Next Steps
 
 - [Multi-Agent Systems](multi_agent.md)

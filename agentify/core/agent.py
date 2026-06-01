@@ -362,7 +362,7 @@ class BaseAgent(Runnable):
         content = getattr(msg_object, "content", None)
         
         # Handle reasoning content if present
-        reasoning_content = getattr(msg_object, "reasoning_content", None)
+        reasoning_content = getattr(msg_object, "reasoning_content", None) or None
         if reasoning_content:
             for cb in self.callbacks:
                 cb.on_reasoning_step(reasoning_content)
@@ -546,12 +546,27 @@ class BaseAgent(Runnable):
             common_params["tools"] = tools_payload
             common_params["tool_choice"] = tool_choice_param
 
+        is_native_backend = getattr(async_client, "is_native_thread_backend", False) is True
+
+        if is_native_backend and tools_payload and getattr(async_client, "supports_tools", True) is False:
+            raise NotImplementedError(
+                "Agentify's classic tool loop is not supported by the native Codex provider. "
+                "Use provider='openai' for OpenAI-style tool_calls, or expose tools to Codex "
+                "through Agentify MCP stdio."
+            )
+
+        if is_native_backend and self.config.stream and getattr(async_client, "supports_streaming", True) is False:
+            raise NotImplementedError(
+                "Streaming is not supported by the native Codex provider. "
+                "Agentify reconstructs a single final response from Codex turn events."
+            )
+
         for cb in self.callbacks:
             cb.on_llm_start(self.config.model_name, common_params["messages"])
 
         for attempt in range(self.config.max_retries):
             try:
-                if getattr(async_client, "is_native_thread_backend", False):
+                if is_native_backend:
                     last_content = common_params["messages"][-1]["content"] if common_params["messages"] else ""
                     if isinstance(last_content, list):
                         prompt = " ".join([c.get("text", "") for c in last_content if c.get("type") == "text"])
@@ -712,7 +727,6 @@ class BaseAgent(Runnable):
         tool_call_assembler: Dict[int, Dict[str, Any]] = {}
         full_content = []
         full_reasoning = []
-        has_reasoning_attr = False
 
         async for chunk in response_stream:
             if not chunk.choices:
@@ -727,7 +741,6 @@ class BaseAgent(Runnable):
 
             # Handle reasoning content if present
             if hasattr(delta, "reasoning_content"):
-                has_reasoning_attr = True
                 if delta.reasoning_content:
                     for cb in self.callbacks:
                         cb.on_reasoning_step(delta.reasoning_content)
@@ -769,7 +782,7 @@ class BaseAgent(Runnable):
             if call_data.get("function", {}).get("name"):
                 self._last_stream_tool_calls.append(call_data)
         
-        self._last_stream_reasoning = "".join(full_reasoning) if has_reasoning_attr else None
+        self._last_stream_reasoning = "".join(full_reasoning) or None
 
     async def _aexecute_agent_loop(
         self,
@@ -838,7 +851,7 @@ class BaseAgent(Runnable):
             # Exit if no tool calls are present
             if not assembled_tool_calls:
                 msg_kwargs = {}
-                if full_reasoning_content is not None:
+                if full_reasoning_content:
                     msg_kwargs["metadata"] = {"reasoning_content": full_reasoning_content}
                     if self.config.stream:
                         yield "\x1eagentify_event:" + json.dumps(
@@ -859,7 +872,7 @@ class BaseAgent(Runnable):
             if full_turn_content:
                 assistant_msg["content"] = full_turn_content
             assistant_msg["tool_calls"] = assembled_tool_calls
-            if full_reasoning_content is not None:
+            if full_reasoning_content:
                 assistant_msg["metadata"] = {"reasoning_content": full_reasoning_content}
 
             tool_names = [

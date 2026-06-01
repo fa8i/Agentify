@@ -142,4 +142,4 @@ class MCPConnection(AbstractAsyncContextManager):
             raise RuntimeError("MCPConnection is not active. Use 'async with ...'")
 
         result = await self._session.list_tools()
-        return await convert_mcp_tools_to_agentify(self._session, result.tools)
+        return convert_mcp_tools_to_agentify(self._session, result.tools)

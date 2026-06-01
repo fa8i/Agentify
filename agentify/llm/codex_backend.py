@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Dict, Optional, List, Union
+import asyncio
+from typing import Any, Dict
 
 try:
     from openai_codex import AsyncCodex
@@ -13,7 +14,6 @@ class DummyMessage:
         self.content = content
         self.tool_calls = None
         self.role = "assistant"
-        self.reasoning_content = None
 
 class DummyChoice:
     def __init__(self, content: str):
@@ -38,6 +38,10 @@ class CodexThreadBackend:
     preserved (in-memory dict by default; can be backed by any persistent store).
     """
     is_native_thread_backend = True
+    supports_tools = False
+    supports_openai_tool_calls = False
+    supports_mcp_tools = True
+    supports_streaming = False
 
     def __init__(self, config: Dict[str, Any], timeout: int):
         if AsyncCodex is None:
@@ -47,6 +51,7 @@ class CodexThreadBackend:
             )
         self.config = config
         self.timeout = timeout
+        self.mcp_tools_enabled = bool(config.get("mcp_tools_enabled", True))
 
         # agentify_session_id → codex_thread_id (string, not the live object)
         self.thread_ids: Dict[str, str] = {}
@@ -129,25 +134,111 @@ class CodexThreadBackend:
         **kwargs,
     ) -> Any:
         """Send *only* the latest prompt to the Codex thread for this session."""
+        if stream:
+            raise NotImplementedError(
+                "Streaming is not supported by the native Codex provider. "
+                "Agentify reconstructs a single final response from Codex turn events."
+            )
+
         thread = await self._get_or_create_thread(session_id, model)
 
-        try:
-            result = await thread.run(prompt)
-        except AttributeError:
-            logger.error(
-                "Codex Thread object does not have 'run' method. "
-                "SDK might have changed."
-            )
-            raise
-
-        response_content = getattr(result, "final_response", str(result))
-
-        if stream:
-            async def stream_generator():
-                yield DummyResponse(response_content)
-            return stream_generator()
+        if hasattr(thread, "turn"):
+            response_content = await self._run_thread_turn_from_events(thread, prompt)
+        else:
+            if self.mcp_tools_enabled:
+                raise RuntimeError(
+                    "Codex MCP tools require event streaming via thread.turn(...).stream(). "
+                    "The installed openai-codex SDK does not expose this API."
+                )
+            try:
+                result = await thread.run(prompt)
+            except AttributeError:
+                logger.error(
+                    "Codex Thread object does not have 'run' method. "
+                    "SDK might have changed."
+                )
+                raise
+            response_content = self._extract_response_content(result)
 
         return DummyResponse(response_content)
+
+    async def _run_thread_turn_from_events(self, thread: Any, prompt: str) -> str:
+        from agentify.llm.codex_events import CodexEventCollector
+
+        turn = await thread.turn(prompt)
+        collector = CodexEventCollector()
+        stream = turn.stream()
+        try:
+            await self._collect_turn_events(stream, collector)
+        finally:
+            await stream.aclose()
+
+        result = collector.result()
+        if result.errors:
+            raise RuntimeError("; ".join(result.errors))
+        if not result.final_text:
+            raise RuntimeError(
+                "Codex turn completed without reconstructible text. "
+                "No agent message delta, agent message item, or MCP tool result was exposed "
+                "by the event stream."
+            )
+        return result.final_text
+
+    async def _collect_turn_events(self, stream: Any, collector: Any) -> None:
+        iterator = stream.__aiter__()
+        while True:
+            try:
+                event = await asyncio.wait_for(iterator.__anext__(), timeout=float(self.timeout))
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError as exc:
+                raise TimeoutError(
+                    f"Timed out waiting for Codex turn events after {self.timeout} seconds."
+                ) from exc
+
+            collector.ingest(event)
+            if collector.turn_completed:
+                break
+
+    def _extract_response_content(self, result: Any) -> str:
+        """Extract useful text from Codex turn results.
+
+        Some Codex turns that primarily use MCP tools can complete with
+        ``final_response=None`` while still containing MCP output in turn items.
+        """
+        final_response = getattr(result, "final_response", None)
+        if final_response:
+            return str(final_response)
+
+        items = getattr(result, "items", None) or []
+        for item in reversed(items):
+            root = getattr(item, "root", item)
+            text = getattr(root, "text", None)
+            if text:
+                return str(text)
+
+            mcp_result = getattr(root, "result", None)
+            if mcp_result is not None:
+                content_text = self._extract_mcp_content_text(getattr(mcp_result, "content", None))
+                if content_text:
+                    return content_text
+
+        return str(result)
+
+    def _extract_mcp_content_text(self, content: Any) -> str | None:
+        if not content:
+            return None
+
+        parts = []
+        for item in content:
+            text = getattr(item, "text", None)
+            if text:
+                parts.append(str(text))
+                continue
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+
+        return "\n".join(parts) if parts else None
 
     # Fallback Adapter interface
     class Chat:

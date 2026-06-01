@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - **Tool Hooks System**: New `tool_pre_hooks` and `tool_post_hooks` in `BaseAgent` for executing custom logic before and after tool execution.
 - **SpawnAgentTool Enhancements**: Support for passing `tools`, `pre_hooks`, `post_hooks`, `tool_pre_hooks`, and `tool_post_hooks` to spawned sub-agents.
 - **MCP Tool Name Validation**: New `_safe_function_name()` function to safely convert MCP tool names into valid Python identifiers.
+- **Experimental Codex Native Provider with MCP-backed Tools**: Agentify now supports Codex as a native experimental provider using ChatGPT OAuth and Codex threads. Unlike OpenAI providers, Codex does not use `tool_calls`; Agentify exposes tools through an MCP stdio server and reconstructs Codex responses from thread event streams.
 
 ### Changed
 - **MCP Adapter**: `convert_mcp_tools_to_agentify()` is now synchronous (no longer async) with improved error handling and null-coalescing for `inputSchema`.

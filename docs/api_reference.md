@@ -257,6 +257,9 @@ Supported providers:
 - `"anthropic"`
 - `"llama"`
 - `"local"` (e.g., LM Studio, Ollama)
+- `"codex"` (experimental native Codex threads via ChatGPT OAuth; Agentify
+  tools must be exposed via MCP stdio, not OpenAI-style `tool_calls`; responses
+  are reconstructed from `thread.turn(...).stream()` events; no real streaming)
 
 
 ## Multi-Agent
@@ -445,6 +448,39 @@ class WriteFileTool(Tool):
     def __init__(self, sandbox_dir: Optional[str] = None)
 ```
 Writes content to files.
+
+## MCP
+
+### AgentifyMCPServer
+
+Transport-agnostic adapter for exposing a scoped set of Agentify tools as MCP
+tool definitions and handlers. This is the foundation for using tools with the
+native Codex provider, where Codex consumes tools through MCP instead of
+OpenAI-style `tool_calls`.
+
+```python
+class AgentifyMCPServer:
+    def __init__(self, tools: Sequence[Tool], *, allowlist: Iterable[str] | None = None)
+    def list_tools(self) -> list[mcp.types.Tool]
+    async def call_tool(self, name: str, arguments: Mapping[str, Any] | None = None) -> mcp.types.CallToolResult
+```
+
+Use `allowlist` to limit which Agentify tools are exposed to Codex through MCP.
+
+Stdio entrypoint:
+
+```bash
+python -m agentify.mcp.server \
+  --registry my_project.tools:build_agentify_tools \
+  --allow search_docs \
+  --debug-log /tmp/agentify-mcp.log
+```
+
+Config helper:
+
+```bash
+agentify codex mcp config --name agentify-my-agent --registry my_project.tools:build_agentify_tools --allow search_docs
+```
 
 ## Callbacks
 
