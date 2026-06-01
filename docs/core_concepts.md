@@ -375,8 +375,9 @@ config = AgentConfig(
 ### Codex Native Provider
 
 The `codex` provider uses ChatGPT OAuth via `codex login` and native Codex
-threads. It sends the latest Agentify prompt string to a native Codex thread and
-lets Codex maintain thread context.
+threads. By default, Agentify remains the source of truth for memory: the
+provider reads the configured Agentify memory store, formats that conversation
+state into the Codex turn prompt, and starts a fresh Codex thread for each turn.
 
 ```python
 config = AgentConfig(
@@ -393,8 +394,9 @@ Supported:
 
 - ChatGPT OAuth through the Codex CLI
 - Native Codex threads
-- Persistent context per Codex thread
-- Plain string prompts sent to native Codex turns
+- Agentify-managed memory from SQLite, in-memory, Elastic, or any configured store
+- Optional persistent context per Codex thread with `memory_mode="codex_thread"`
+- Prompt context built from Agentify memory and sent to native Codex turns
 - Agentify tools exposed via MCP stdio
 
 Not supported:
@@ -407,6 +409,69 @@ Use `provider="openai"` for agents that need OpenAI-style function calling.
 For Codex, tools must be exposed through MCP. Codex decides and invokes those
 tools internally; it does not return `assistant_message.tool_calls` to Agentify.
 Agentify reconstructs the final answer from `thread.turn(...).stream()` events.
+Passing normal `tools=[...]` to `BaseAgent(provider="codex")` is intentionally
+not mapped to OpenAI `tool_calls`; expose those tools through an importable MCP
+registry instead.
+
+By default, Codex uses Agentify-managed memory. Agentify formats the current
+conversation history from its configured memory store into the prompt sent to a
+fresh Codex thread, so SQLite/in-memory/Elastic remain the source of truth. To
+opt into native Codex thread memory instead, configure:
+
+```python
+config = AgentConfig(
+    provider="codex",
+    model_name="gpt-5.3-codex",
+    client_config_override={"memory_mode": "codex_thread"}
+)
+```
+
+The default is equivalent to:
+
+```python
+client_config_override={"memory_mode": "agentify"}
+```
+
+In `memory_mode="agentify"`, Codex threads are not reused as memory. In
+`memory_mode="codex_thread"`, Codex thread IDs are reused per Agentify session.
+
+Example with SQLite memory:
+
+```python
+from agentify.core.agent import BaseAgent
+from agentify.core.config import AgentConfig
+from agentify.memory.interfaces import MemoryAddress
+from agentify.memory.service import MemoryService
+from agentify.memory.stores.sqlite_store import SQLiteStore
+
+memory = MemoryService(store=SQLiteStore("agentify-memory.db"))
+addr = MemoryAddress(
+    tenant_id="tenant-1",
+    user_id="user-1",
+    conversation_id="conversation-1",
+    agent_id="codex-agent",
+)
+
+agent = BaseAgent(
+    config=AgentConfig(
+        name="CodexAgent",
+        system_prompt="You are a helpful assistant.",
+        provider="codex",
+        model_name="gpt-5.3-codex",
+    ),
+    memory=memory,
+    memory_address=addr,
+)
+
+agent.run("Remember that I live in Madrid.")
+agent.run("Where do I live?")
+```
+
+Both user turns and assistant responses are persisted in SQLite under the same
+`MemoryAddress`. On the second call, Agentify reads that SQLite history and sends
+the current conversation state to Codex. If a `MemoryPolicy` trims or summarizes
+history, Codex receives the policy-filtered history rather than unbounded raw
+history.
 
 Agentify provides a transport-agnostic `AgentifyMCPServer` adapter that converts
 registered Agentify tools into MCP tool definitions and handlers. Wire this

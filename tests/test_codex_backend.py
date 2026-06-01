@@ -68,7 +68,7 @@ class MockAsyncCodex:
         self._thread_counter = 0
         self.resumed_ids = []
 
-    async def thread_start(self, model: str):
+    async def thread_start(self, model: str, **kwargs):
         self._thread_counter += 1
         return MockThread(thread_id=f"codex_thread_{self._thread_counter}")
 
@@ -92,7 +92,7 @@ def test_codex_backend_init_raises_without_dependency():
 
 def test_codex_backend_stores_thread_id_not_object(mock_codex):
     """thread_ids dict stores string IDs, not live AsyncThread objects."""
-    backend = CodexThreadBackend(config={}, timeout=30)
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
 
     asyncio.run(
         backend.run_native(session_id="session1", model="gpt-5.4", prompt="Hello")
@@ -105,7 +105,7 @@ def test_codex_backend_stores_thread_id_not_object(mock_codex):
 
 def test_codex_backend_resumes_thread_on_second_call(mock_codex):
     """Second call for the same session uses thread_resume with the stored ID."""
-    backend = CodexThreadBackend(config={}, timeout=30)
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
 
     # First call → thread_start
     asyncio.run(
@@ -126,7 +126,7 @@ def test_codex_backend_resumes_thread_on_second_call(mock_codex):
 
 def test_codex_backend_separate_sessions_separate_threads(mock_codex):
     """Different session IDs produce different Codex threads."""
-    backend = CodexThreadBackend(config={}, timeout=30)
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
 
     asyncio.run(
         backend.run_native(session_id="session_a", model="gpt-5.4", prompt="Task A")
@@ -142,7 +142,7 @@ def test_codex_backend_separate_sessions_separate_threads(mock_codex):
 
 def test_codex_backend_adapter_compatibility(mock_codex):
     """Fallback adapter (chat.completions.create) works correctly."""
-    backend = CodexThreadBackend(config={}, timeout=30)
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
 
     response = asyncio.run(
         backend.chat.completions.create(
@@ -158,6 +158,54 @@ def test_codex_backend_adapter_compatibility(mock_codex):
 
     assert response.choices[0].message.content == "Response to: To get to the other side!"
     assert "session2" in backend.thread_ids
+
+
+def test_codex_backend_defaults_to_agentify_memory_without_thread_reuse(mock_codex):
+    backend = CodexThreadBackend(config={}, timeout=30)
+
+    asyncio.run(
+        backend.run_native(session_id="session1", model="gpt-5.4", prompt="Hello")
+    )
+    asyncio.run(
+        backend.run_native(session_id="session1", model="gpt-5.4", prompt="Again")
+    )
+
+    assert backend.thread_ids == {}
+    assert backend.codex._thread_counter == 2
+    assert backend.codex.resumed_ids == []
+
+
+def test_codex_backend_builds_prompt_from_agentify_messages(mock_codex):
+    backend = CodexThreadBackend(config={}, timeout=30)
+    prompt = backend._build_prompt(
+        "latest only",
+        [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Remember: my city is Madrid."},
+            {"role": "assistant", "content": "Got it."},
+            {"role": "user", "content": "What is my city?"},
+        ],
+    )
+
+    assert "Agentify-managed conversation state" in prompt
+    assert "SYSTEM: You are helpful." in prompt
+    assert "USER: Remember: my city is Madrid." in prompt
+    assert "ASSISTANT: Got it." in prompt
+    assert "USER: What is my city?" in prompt
+
+
+def test_codex_backend_codex_thread_mode_uses_latest_prompt(mock_codex):
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+
+    assert (
+        backend._build_prompt("latest only", [{"role": "user", "content": "history"}])
+        == "latest only"
+    )
+
+
+def test_codex_backend_rejects_invalid_memory_mode(mock_codex):
+    with pytest.raises(ValueError, match="memory_mode"):
+        CodexThreadBackend(config={"memory_mode": "bad"}, timeout=30)
 
 
 def test_codex_backend_rejects_streaming(mock_codex):
@@ -451,6 +499,55 @@ def test_supports_tools_false_does_not_block_codex_without_classic_tools():
     )
 
     assert asyncio.run(agent.arun("Hello")) == "ok"
+
+
+def test_native_codex_backend_receives_agentify_memory_messages():
+    class NativeCodexMock:
+        is_native_thread_backend = True
+        supports_tools = False
+        supports_openai_tool_calls = False
+        supports_mcp_tools = True
+        supports_streaming = False
+
+        def __init__(self):
+            self.kwargs = None
+
+        async def run_native(self, **kwargs):
+            self.kwargs = kwargs
+            return DummyResponse("ok")
+
+    native_client = NativeCodexMock()
+
+    class Factory:
+        def create_client(self, **kwargs):
+            return MagicMock()
+
+        def create_async_client(self, **kwargs):
+            return native_client
+
+    agent = BaseAgent(
+        config=AgentConfig(
+            name="CodexAgent",
+            system_prompt="Test agent.",
+            provider="codex",
+            model_name="gpt-5.3-codex",
+        ),
+        memory=MemoryService(store=InMemoryStore(), log_enabled=False),
+        memory_address=MemoryAddress(conversation_id="session1"),
+        client_factory=Factory(),
+    )
+    agent.add("user", "Remember: my city is Madrid")
+    agent.add("assistant", "Got it")
+
+    assert asyncio.run(agent.arun("What is my city?")) == "ok"
+    assert native_client.kwargs is not None
+    assert native_client.kwargs["prompt"] == "What is my city?"
+    assert native_client.kwargs["messages"] == [
+        {"role": "system", "content": "Test agent."},
+        {"role": "user", "content": "Remember: my city is Madrid"},
+        {"role": "assistant", "content": "Got it"},
+        {"role": "user", "content": "What is my city?"},
+    ]
 
 
 def test_agent_rejects_streaming_for_native_codex_backend():

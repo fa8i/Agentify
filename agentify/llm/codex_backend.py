@@ -25,17 +25,12 @@ class DummyResponse:
         self.choices = [DummyChoice(content)]
 
 class CodexThreadBackend:
-    """
-    Native Codex Thread Backend mapping agentify sessions to persistent codex thread IDs.
+    """Native Codex Thread Backend.
 
-    Stores ``agentify_session_id → codex_thread_id`` (a plain string) rather than
-    holding the live ``AsyncThread`` object.  On every call the backend either:
-
-    * **Starts** a new thread (first interaction for a session), or
-    * **Resumes** an existing thread via ``codex.thread_resume(thread_id)``.
-
-    This means sessions survive process restarts as long as the mapping is
-    preserved (in-memory dict by default; can be backed by any persistent store).
+    By default, Agentify memory is the source of truth: every turn starts a
+    fresh Codex thread and sends the Agentify-managed history in the prompt.
+    Set ``memory_mode="codex_thread"`` to reuse Codex thread IDs per Agentify
+    session instead.
     """
     is_native_thread_backend = True
     supports_tools = False
@@ -52,6 +47,9 @@ class CodexThreadBackend:
         self.config = config
         self.timeout = timeout
         self.mcp_tools_enabled = bool(config.get("mcp_tools_enabled", True))
+        self.memory_mode = str(config.get("memory_mode", "agentify"))
+        if self.memory_mode not in {"agentify", "codex_thread"}:
+            raise ValueError("Codex memory_mode must be 'agentify' or 'codex_thread'.")
 
         # agentify_session_id → codex_thread_id (string, not the live object)
         self.thread_ids: Dict[str, str] = {}
@@ -104,6 +102,13 @@ class CodexThreadBackend:
 
     async def _get_or_create_thread(self, session_id: str, model: str):
         """Return a live AsyncThread, creating or resuming as needed."""
+        if self.memory_mode == "agentify":
+            logger.debug("Starting ephemeral Codex thread for Agentify-managed memory")
+            try:
+                return await self.codex.thread_start(model=model, ephemeral=True)
+            except TypeError:
+                return await self.codex.thread_start(model=model)
+
         thread_id = self.thread_ids.get(session_id)
 
         if thread_id is not None:
@@ -140,6 +145,7 @@ class CodexThreadBackend:
                 "Agentify reconstructs a single final response from Codex turn events."
             )
 
+        prompt = self._build_prompt(prompt, kwargs.get("messages"))
         thread = await self._get_or_create_thread(session_id, model)
 
         if hasattr(thread, "turn"):
@@ -161,6 +167,43 @@ class CodexThreadBackend:
             response_content = self._extract_response_content(result)
 
         return DummyResponse(response_content)
+
+    def _build_prompt(self, fallback_prompt: str, messages: Any) -> str:
+        """Build the Codex turn prompt from Agentify memory when configured."""
+        if self.memory_mode != "agentify" or not isinstance(messages, list):
+            return fallback_prompt
+
+        parts = [
+            "Use the following Agentify-managed conversation state as the source of truth. "
+            "Do not rely on previous Codex thread state for memory."
+        ]
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role", "message")).upper()
+            content = self._stringify_message_content(message.get("content"))
+            if content:
+                parts.append(f"{role}: {content}")
+        return "\n\n".join(parts)
+
+    def _stringify_message_content(self, content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text" and item.get("text"):
+                        text_parts.append(str(item["text"]))
+                    elif item.get("type") in {"image_url", "input_image"}:
+                        text_parts.append(
+                            "[image omitted: Codex provider does not support "
+                            "Agentify image input]"
+                        )
+            return "\n".join(text_parts)
+        if content is None:
+            return ""
+        return str(content)
 
     async def _run_thread_turn_from_events(self, thread: Any, prompt: str) -> str:
         from agentify.llm.codex_events import CodexEventCollector
