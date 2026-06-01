@@ -22,10 +22,10 @@ def main():
     researcher_config = AgentConfig(
         name="Researcher",
         system_prompt="You are a researcher. Given a topic, provide 3 key facts about it. Be concise.",
-        model_name="gpt-5-mini",
-        provider="openai",
+        model_name="gpt-5.5",
+        provider="codex",
         temperature=1,
-        reasoning_effort="medium",
+        verbose=False,
     )
     researcher = BaseAgent(config=researcher_config, memory=memory_service)
 
@@ -33,10 +33,10 @@ def main():
     writer_config = AgentConfig(
         name="Writer",
         system_prompt="You are a writer. Given a list of facts, write a short poem incorporating them.",
-        model_name="deepseek-reasoner",
-        provider="deepseek",
+        model_name="gpt-5.5",
+        provider="codex",
         temperature=1,
-        reasoning_effort="medium",
+        verbose=False,
     )
     writer = BaseAgent(config=writer_config, memory=memory_service)
 

@@ -260,7 +260,7 @@ Supported providers:
 - `"codex"` (experimental native Codex threads via ChatGPT OAuth; Agentify
   memory is the default source of truth; normal `BaseAgent(tools=[...])` tools
   are adapted to runtime MCP instead of OpenAI-style `tool_calls`; responses are
-  reconstructed from `thread.turn(...).stream()` events; no real streaming)
+  reconstructed or streamed from `thread.turn(...).stream()` events)
 
 Codex-specific `client_config_override` keys:
 
@@ -275,6 +275,19 @@ Codex-specific `client_config_override` keys:
   `BaseAgent`, Agentify starts a local runtime MCP bridge and passes that MCP
   config to the Codex thread automatically. Set to `False` only if tools are
   configured through an external MCP server manually.
+- `output_schema`: optional JSON schema passed to Codex `thread.turn(...)` for
+  structured output. OpenAI-style `response_format={"type": "json_schema", ...}`
+  is also mapped to this internally.
+
+Codex-specific notes:
+
+- `stream=True` emits text deltas from Codex turn events.
+- `image_path` multimodal input is converted to Codex SDK image input when
+  supported by the installed SDK.
+- Runtime MCP tool calls respect `AgentConfig.tool_timeout` and
+  `AgentConfig.max_tool_iter`.
+- Use `agent.close()` or `await agent.aclose()` to release provider resources in
+  long-running applications.
 
 
 ## Multi-Agent

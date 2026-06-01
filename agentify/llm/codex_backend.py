@@ -1,9 +1,13 @@
 import logging
 import asyncio
+import os
+import shutil
 from collections.abc import Sequence
 from typing import Any, Dict
 
 from agentify.core.tool import Tool
+from agentify.llm.codex_errors import raise_codex_errors
+from agentify.llm.codex_inputs import build_codex_turn_input, extract_output_schema
 from agentify.mcp.runtime_bridge import RuntimeMCPBridge
 
 try:
@@ -28,6 +32,7 @@ class DummyResponse:
     def __init__(self, content: str):
         self.choices = [DummyChoice(content)]
 
+
 class CodexThreadBackend:
     """Native Codex Thread Backend.
 
@@ -40,7 +45,7 @@ class CodexThreadBackend:
     supports_tools = False
     supports_openai_tool_calls = False
     supports_mcp_tools = True
-    supports_streaming = False
+    supports_streaming = True
 
     def __init__(self, config: Dict[str, Any], timeout: int):
         if AsyncCodex is None:
@@ -60,36 +65,8 @@ class CodexThreadBackend:
         # agentify_session_id → codex_thread_id (string, not the live object)
         self.thread_ids: Dict[str, str] = {}
 
-        import shutil
-        import os
-
-        codex_path = shutil.which("codex")
-        if not codex_path:
-            # Fallback for common global install paths
-            common_paths = [
-                os.path.expanduser("~/.npm-global/bin/codex"),
-                os.path.expanduser(
-                    "~/.npm-global/lib/node_modules/@openai/codex/"
-                    "node_modules/@openai/codex-linux-x64/vendor/"
-                    "x86_64-unknown-linux-musl/codex/codex"
-                ),
-            ]
-            # Dynamically discover VSCode extension binaries
-            vscode_ext_dir = os.path.expanduser("~/.vscode/extensions")
-            if os.path.isdir(vscode_ext_dir):
-                for entry in sorted(os.listdir(vscode_ext_dir), reverse=True):
-                    if entry.startswith("openai.chatgpt-"):
-                        candidate = os.path.join(
-                            vscode_ext_dir, entry, "bin", "linux-x86_64", "codex"
-                        )
-                        common_paths.append(candidate)
-
-            for p in common_paths:
-                if os.path.exists(p) and os.access(p, os.X_OK):
-                    codex_path = p
-                    break
-
-        if not codex_path:
+        codex_path = _find_codex_binary()
+        if codex_path is None:
             logger.warning(
                 "No global 'codex' executable found in PATH. "
                 "AsyncCodex might fail to start if openai-codex-cli-bin is missing."
@@ -101,6 +78,15 @@ class CodexThreadBackend:
                 self.codex = AsyncCodex(config=CodexConfig(codex_bin=codex_path))
             except ImportError:
                 self.codex = AsyncCodex()
+
+    async def close(self) -> None:
+        """Close runtime resources owned by the Codex backend."""
+        if self._runtime_mcp_bridge is not None:
+            await self._runtime_mcp_bridge.close()
+            self._runtime_mcp_bridge = None
+        close = getattr(self.codex, "close", None)
+        if close is not None:
+            await close()
 
     # ------------------------------------------------------------------
     # Thread lifecycle helpers
@@ -159,13 +145,11 @@ class CodexThreadBackend:
         **kwargs,
     ) -> Any:
         """Send *only* the latest prompt to the Codex thread for this session."""
-        if stream:
-            raise NotImplementedError(
-                "Streaming is not supported by the native Codex provider. "
-                "Agentify reconstructs a single final response from Codex turn events."
-            )
-
-        prompt = self._build_prompt(prompt, kwargs.get("messages"))
+        prompt = build_codex_turn_input(
+            prompt,
+            kwargs.get("messages"),
+            memory_mode=self.memory_mode,
+        )
         thread_config = await self._build_thread_config(
             kwargs.get("agentify_tools"),
             tool_timeout=kwargs.get("agentify_tool_timeout"),
@@ -176,9 +160,21 @@ class CodexThreadBackend:
             model,
             thread_config=thread_config,
         )
+        output_schema = extract_output_schema(kwargs)
+
+        if stream:
+            return self._stream_thread_turn_events(
+                thread,
+                prompt,
+                output_schema=output_schema,
+            )
 
         if hasattr(thread, "turn"):
-            response_content = await self._run_thread_turn_from_events(thread, prompt)
+            response_content = await self._run_thread_turn_from_events(
+                thread,
+                prompt,
+                output_schema=output_schema,
+            )
         else:
             if self.mcp_tools_enabled:
                 raise RuntimeError(
@@ -230,57 +226,29 @@ class CodexThreadBackend:
         self._runtime_mcp_bridge.update_tool_executor(tool_executor)
         return self._runtime_mcp_bridge.codex_config()
 
-    def _build_prompt(self, fallback_prompt: str, messages: Any) -> str:
-        """Build the Codex turn prompt from Agentify memory when configured."""
-        if self.memory_mode != "agentify" or not isinstance(messages, list):
-            return fallback_prompt
-
-        parts = [
-            "Use the following Agentify-managed conversation state as the source of truth. "
-            "Do not rely on previous Codex thread state for memory."
-        ]
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            role = str(message.get("role", "message")).upper()
-            content = self._stringify_message_content(message.get("content"))
-            if content:
-                parts.append(f"{role}: {content}")
-        return "\n\n".join(parts)
-
-    def _stringify_message_content(self, content: Any) -> str:
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            text_parts = []
-            for item in content:
-                if isinstance(item, dict):
-                    if item.get("type") == "text" and item.get("text"):
-                        text_parts.append(str(item["text"]))
-                    elif item.get("type") in {"image_url", "input_image"}:
-                        text_parts.append(
-                            "[image omitted: Codex provider does not support "
-                            "Agentify image input]"
-                        )
-            return "\n".join(text_parts)
-        if content is None:
-            return ""
-        return str(content)
-
-    async def _run_thread_turn_from_events(self, thread: Any, prompt: str) -> str:
+    async def _run_thread_turn_from_events(
+        self,
+        thread: Any,
+        prompt: Any,
+        *,
+        output_schema: dict[str, Any] | None = None,
+    ) -> str:
         from agentify.llm.codex_events import CodexEventCollector
 
-        turn = await thread.turn(prompt)
         collector = CodexEventCollector()
+        turn = await self._start_turn(thread, prompt, output_schema=output_schema)
         stream = turn.stream()
         try:
-            await self._collect_turn_events(stream, collector)
+            async for event in self._iter_turn_events(stream):
+                collector.ingest(event)
+                if collector.turn_completed:
+                    break
         finally:
             await stream.aclose()
 
         result = collector.result()
         if result.errors:
-            raise RuntimeError("; ".join(result.errors))
+            raise_codex_errors(result.errors)
         if not result.final_text:
             raise RuntimeError(
                 "Codex turn completed without reconstructible text. "
@@ -289,11 +257,57 @@ class CodexThreadBackend:
             )
         return result.final_text
 
-    async def _collect_turn_events(self, stream: Any, collector: Any) -> None:
+    async def _stream_thread_turn_events(
+        self,
+        thread: Any,
+        prompt: Any,
+        *,
+        output_schema: dict[str, Any] | None = None,
+    ):
+        from agentify.llm.codex_events import CodexEventCollector
+
+        if not hasattr(thread, "turn"):
+            raise RuntimeError(
+                "Streaming requires Codex event streaming via thread.turn(...).stream()."
+        )
+
+        collector = CodexEventCollector()
+        turn = await self._start_turn(thread, prompt, output_schema=output_schema)
+        stream = turn.stream()
+        try:
+            async for event in self._iter_turn_events(stream):
+                delta = self._event_agent_message_delta(event)
+                collector.ingest(event)
+                if delta:
+                    yield DummyResponse(delta)
+                if collector.turn_completed:
+                    break
+        finally:
+            await stream.aclose()
+
+        result = collector.result()
+        if result.errors:
+            raise_codex_errors(result.errors)
+
+    async def _start_turn(
+        self,
+        thread: Any,
+        prompt: Any,
+        *,
+        output_schema: dict[str, Any] | None = None,
+    ) -> Any:
+        if output_schema is not None:
+            return await thread.turn(prompt, output_schema=output_schema)
+        return await thread.turn(prompt)
+
+    async def _iter_turn_events(self, stream: Any):
         iterator = stream.__aiter__()
         while True:
             try:
-                event = await asyncio.wait_for(iterator.__anext__(), timeout=float(self.timeout))
+                yield await asyncio.wait_for(
+                    iterator.__anext__(),
+                    timeout=float(self.timeout),
+                )
             except StopAsyncIteration:
                 break
             except asyncio.TimeoutError as exc:
@@ -301,9 +315,25 @@ class CodexThreadBackend:
                     f"Timed out waiting for Codex turn events after {self.timeout} seconds."
                 ) from exc
 
-            collector.ingest(event)
-            if collector.turn_completed:
-                break
+    def _event_agent_message_delta(self, event: Any) -> str | None:
+        method = (
+            event.get("method")
+            if isinstance(event, dict)
+            else getattr(event, "method", "")
+        )
+        if method not in {"item/agentMessage/delta", "agentMessage/delta"}:
+            return None
+        payload = (
+            event.get("payload")
+            if isinstance(event, dict)
+            else getattr(event, "payload", None)
+        )
+        delta = (
+            payload.get("delta")
+            if isinstance(payload, dict)
+            else getattr(payload, "delta", None)
+        )
+        return str(delta) if delta else None
 
     def _extract_response_content(self, result: Any) -> str:
         """Extract useful text from Codex turn results.
@@ -353,20 +383,25 @@ class CodexThreadBackend:
             
             async def create(self, **kwargs) -> Any:
                 messages = kwargs.get("messages", [])
-                # If content is a list (multimodal), we extract text or serialize
-                last_content = messages[-1]["content"] if messages else ""
-                if isinstance(last_content, list):
-                    prompt = " ".join([c.get("text", "") for c in last_content if c.get("type") == "text"])
-                else:
-                    prompt = last_content
+                prompt = _latest_message_text(messages)
                 
                 model = kwargs.get("model", "gpt-4")
                 session_id = kwargs.get("session_id", "compat_session")
                 stream = kwargs.get("stream", False)
                 
                 # Remove duplicate keys from kwargs before passing
-                clean_kwargs = {k: v for k, v in kwargs.items() if k not in ("session_id", "model", "stream")}
-                return await self.backend.run_native(session_id, model, prompt, stream, **clean_kwargs)
+                clean_kwargs = {
+                    k: v
+                    for k, v in kwargs.items()
+                    if k not in ("session_id", "model", "stream")
+                }
+                return await self.backend.run_native(
+                    session_id,
+                    model,
+                    prompt,
+                    stream,
+                    **clean_kwargs,
+                )
                 
     @property
     def chat(self):
@@ -374,3 +409,51 @@ class CodexThreadBackend:
             self._chat = self.Chat()
             self._chat.completions = self.Chat.Completions(self)
         return self._chat
+
+
+def _find_codex_binary() -> str | None:
+    codex_path = shutil.which("codex")
+    if codex_path:
+        return codex_path
+
+    for candidate in _candidate_codex_paths():
+        if os.path.exists(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _candidate_codex_paths() -> list[str]:
+    paths = [
+        os.path.expanduser("~/.npm-global/bin/codex"),
+        os.path.expanduser(
+            "~/.npm-global/lib/node_modules/@openai/codex/"
+            "node_modules/@openai/codex-linux-x64/vendor/"
+            "x86_64-unknown-linux-musl/codex/codex"
+        ),
+    ]
+
+    vscode_ext_dir = os.path.expanduser("~/.vscode/extensions")
+    if os.path.isdir(vscode_ext_dir):
+        for entry in sorted(os.listdir(vscode_ext_dir), reverse=True):
+            if entry.startswith("openai.chatgpt-"):
+                paths.append(
+                    os.path.join(
+                        vscode_ext_dir,
+                        entry,
+                        "bin",
+                        "linux-x86_64",
+                        "codex",
+                    )
+                )
+    return paths
+
+
+def _latest_message_text(messages: list[dict[str, Any]]) -> str:
+    last_content = messages[-1]["content"] if messages else ""
+    if isinstance(last_content, list):
+        return " ".join(
+            str(item.get("text", ""))
+            for item in last_content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return str(last_content)

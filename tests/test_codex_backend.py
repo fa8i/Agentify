@@ -3,7 +3,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agentify.llm.codex_backend import CodexThreadBackend, DummyResponse
+from agentify.llm.codex_backend import (
+    CodexThreadBackend,
+    DummyResponse,
+)
+from agentify.llm.codex_errors import NonRetryableCodexError, raise_codex_errors
+from agentify.llm.codex_inputs import build_codex_turn_input, extract_output_schema
+from agentify.llm.tool_adapters import CodexMCPToolAdapter
 import agentify.llm.codex_backend as codex_module
 from agentify.core.agent import BaseAgent
 from agentify.core.config import AgentConfig
@@ -68,6 +74,7 @@ class MockAsyncCodex:
         self._thread_counter = 0
         self.resumed_ids = []
         self.thread_start_kwargs = []
+        self.closed = False
 
     async def thread_start(self, model: str, **kwargs):
         self.thread_start_kwargs.append(kwargs)
@@ -77,6 +84,9 @@ class MockAsyncCodex:
     async def thread_resume(self, thread_id: str, **kwargs):
         self.resumed_ids.append(thread_id)
         return MockThread(thread_id=thread_id)
+
+    async def close(self):
+        self.closed = True
 
 
 @pytest.fixture
@@ -178,8 +188,7 @@ def test_codex_backend_defaults_to_agentify_memory_without_thread_reuse(mock_cod
 
 
 def test_codex_backend_builds_prompt_from_agentify_messages(mock_codex):
-    backend = CodexThreadBackend(config={}, timeout=30)
-    prompt = backend._build_prompt(
+    prompt = build_codex_turn_input(
         "latest only",
         [
             {"role": "system", "content": "You are helpful."},
@@ -187,6 +196,7 @@ def test_codex_backend_builds_prompt_from_agentify_messages(mock_codex):
             {"role": "assistant", "content": "Got it."},
             {"role": "user", "content": "What is my city?"},
         ],
+        memory_mode="agentify",
     )
 
     assert "Agentify-managed conversation state" in prompt
@@ -196,11 +206,38 @@ def test_codex_backend_builds_prompt_from_agentify_messages(mock_codex):
     assert "USER: What is my city?" in prompt
 
 
-def test_codex_backend_codex_thread_mode_uses_latest_prompt(mock_codex):
-    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+def test_codex_backend_builds_multimodal_prompt_from_agentify_messages(mock_codex):
+    prompt = build_codex_turn_input(
+        "latest only",
+        [
+            {"role": "system", "content": "You can inspect images."},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,abc123"},
+                    },
+                    {"type": "text", "text": "What is in this image?"},
+                ],
+            },
+        ],
+        memory_mode="agentify",
+    )
 
+    assert isinstance(prompt, list)
+    assert any(getattr(item, "text", "").startswith("Use the following") for item in prompt)
+    assert any(getattr(item, "url", "") == "data:image/jpeg;base64,abc123" for item in prompt)
+    assert any("What is in this image?" in getattr(item, "text", "") for item in prompt)
+
+
+def test_codex_backend_codex_thread_mode_uses_latest_prompt(mock_codex):
     assert (
-        backend._build_prompt("latest only", [{"role": "user", "content": "history"}])
+        build_codex_turn_input(
+            "latest only",
+            [{"role": "user", "content": "history"}],
+            memory_mode="codex_thread",
+        )
         == "latest only"
     )
 
@@ -245,6 +282,26 @@ def test_codex_backend_auto_mcp_tools_adds_runtime_config(mock_codex):
     assert server["enabled_tools"] == ["echo_tool"]
 
 
+def test_codex_backend_close_releases_runtime_bridge_and_client(mock_codex):
+    tool = Tool(schema={"name": "example", "parameters": {"type": "object"}}, func=lambda: "ok")
+    backend = CodexThreadBackend(config={}, timeout=30)
+
+    asyncio.run(
+        backend.run_native(
+            session_id="session1",
+            model="gpt-5.4",
+            prompt="Use tool",
+            agentify_tools=[tool],
+        )
+    )
+
+    assert backend._runtime_mcp_bridge is not None
+    asyncio.run(backend.close())
+
+    assert backend._runtime_mcp_bridge is None
+    assert backend.codex.closed is True
+
+
 def test_codex_backend_auto_mcp_tools_can_be_disabled(mock_codex):
     tool = Tool(
         schema={"name": "example", "parameters": {"type": "object"}},
@@ -263,15 +320,22 @@ def test_codex_backend_auto_mcp_tools_can_be_disabled(mock_codex):
         )
 
 
-def test_codex_backend_rejects_streaming(mock_codex):
+def test_codex_backend_streams_turn_event_deltas(mock_codex):
     backend = CodexThreadBackend(config={}, timeout=30)
 
-    with pytest.raises(NotImplementedError, match="Streaming is not supported"):
-        asyncio.run(
-            backend.run_native(
-                session_id="session1", model="gpt-5.4", prompt="Hello", stream=True
-            )
+    async def run_test():
+        stream = await backend.run_native(
+            session_id="session1",
+            model="gpt-5.4",
+            prompt="Hello",
+            stream=True,
         )
+        chunks = []
+        async for chunk in stream:
+            chunks.append(chunk.choices[0].delta.content)
+        return chunks
+
+    assert asyncio.run(run_test()) == ["Response to: Hello"]
 
 
 def test_codex_dummy_response_does_not_emit_empty_reasoning():
@@ -343,6 +407,72 @@ def test_codex_backend_run_native_uses_event_stream_when_available(mock_codex):
     assert response.choices[0].message.content == "ECHO_FROM_AGENTIFY: hola-agentify"
 
 
+def test_codex_backend_passes_output_schema_to_turn(mock_codex):
+    class Stream:
+        def __init__(self):
+            self._events = iter(
+                [
+                    MagicMock(
+                        method="item/agentMessage/delta",
+                        payload=MagicMock(delta='{"ok":true}'),
+                    ),
+                    MagicMock(
+                        method="turn/completed",
+                        payload=MagicMock(turn=MagicMock(error=None)),
+                    ),
+                ]
+            )
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._events)
+            except StopIteration:
+                raise StopAsyncIteration
+
+        async def aclose(self):
+            pass
+
+    class Turn:
+        def stream(self):
+            return Stream()
+
+    class Thread:
+        def __init__(self):
+            self.output_schema = None
+
+        async def turn(self, prompt, **kwargs):
+            self.output_schema = kwargs.get("output_schema")
+            return Turn()
+
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+    thread = Thread()
+    backend = CodexThreadBackend(config={}, timeout=30)
+    backend._get_or_create_thread = AsyncMock(return_value=thread)
+
+    response = asyncio.run(
+        backend.run_native(
+            session_id="s",
+            model="m",
+            prompt="p",
+            output_schema=schema,
+        )
+    )
+
+    assert response.choices[0].message.content == '{"ok":true}'
+    assert thread.output_schema == schema
+
+
+def test_codex_backend_extracts_openai_style_response_format_schema(mock_codex):
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+
+    assert extract_output_schema(
+        {"response_format": {"type": "json_schema", "json_schema": {"schema": schema}}}
+    ) == schema
+
+
 def test_codex_backend_flags_are_explicit(mock_codex):
     backend = CodexThreadBackend(config={}, timeout=30)
 
@@ -350,7 +480,7 @@ def test_codex_backend_flags_are_explicit(mock_codex):
     assert backend.supports_tools is False
     assert backend.supports_openai_tool_calls is False
     assert backend.supports_mcp_tools is True
-    assert backend.supports_streaming is False
+    assert backend.supports_streaming is True
 
 
 def test_codex_backend_requires_turn_api_when_mcp_tools_enabled(mock_codex):
@@ -412,6 +542,11 @@ def test_codex_backend_errors_when_turn_completes_without_text(mock_codex):
 
     with pytest.raises(RuntimeError, match="without reconstructible text"):
         asyncio.run(backend.run_native(session_id="s", model="m", prompt="p"))
+
+
+def test_codex_backend_marks_usage_limit_non_retryable(mock_codex):
+    with pytest.raises(NonRetryableCodexError, match="usage limit exceeded"):
+        raise_codex_errors(["Codex usage limit exceeded: try later"])
 
 
 def test_codex_backend_timeout_waiting_for_events(mock_codex):
@@ -575,33 +710,28 @@ def test_agent_passes_tools_as_agentify_tools_for_native_codex_mcp_backend():
 
 
 def test_codex_mcp_tool_call_is_recorded_in_memory():
-    tool = Tool(
-        schema={
-            "name": "echo_tool",
-            "parameters": {
-                "type": "object",
-                "properties": {"text": {"type": "string"}},
-                "required": ["text"],
-            },
-        },
-        func=lambda text: f"echo: {text}",
-    )
     memory = MemoryService(store=InMemoryStore(), log_enabled=False)
     addr = MemoryAddress(conversation_id="session1")
-    agent = BaseAgent(
-        config=AgentConfig(
-            name="CodexAgent",
-            system_prompt="Test agent.",
-            provider="codex",
-            model_name="gpt-5.3-codex",
-        ),
-        memory=memory,
-        memory_address=addr,
-        tools=[tool],
+    async def add_memory(**kwargs):
+        message = {key: value for key, value in kwargs.items() if key != "addr"}
+        memory.append_history(kwargs["addr"], message)
+
+    async def execute_tool(tool_name, arguments):
+        assert tool_name == "echo_tool"
+        return f"echo: {arguments['text']}"
+
+    adapter = CodexMCPToolAdapter(
+        agent_name="CodexAgent",
+        provider="codex",
+        tool_timeout=30,
+        max_tool_iter=10,
+        callbacks=[],
+        execute_tool=execute_tool,
+        add_memory=add_memory,
     )
 
     result = asyncio.run(
-        agent._aexecute_mcp_tool_call(
+        adapter.execute_tool_call(
             "echo_tool",
             {"text": "hola"},
             addr=addr,
@@ -617,6 +747,40 @@ def test_codex_mcp_tool_call_is_recorded_in_memory():
     assert history[1]["name"] == "echo_tool"
     assert history[1]["content"] == "echo: hola"
     assert history[1]["source"] == "codex_mcp"
+
+
+def test_codex_mcp_tool_adapter_enforces_max_tool_iter():
+    memory = MemoryService(store=InMemoryStore(), log_enabled=False)
+    addr = MemoryAddress(conversation_id="session1")
+    executed = []
+
+    async def add_memory(**kwargs):
+        message = {key: value for key, value in kwargs.items() if key != "addr"}
+        memory.append_history(kwargs["addr"], message)
+
+    async def execute_tool(tool_name, arguments):
+        executed.append((tool_name, arguments))
+        return "ok"
+
+    adapter = CodexMCPToolAdapter(
+        agent_name="CodexAgent",
+        provider="codex",
+        tool_timeout=30,
+        max_tool_iter=1,
+        callbacks=[],
+        execute_tool=execute_tool,
+        add_memory=add_memory,
+    )
+
+    first = asyncio.run(adapter.execute_tool_call("echo_tool", {}, addr=addr))
+    second = asyncio.run(adapter.execute_tool_call("echo_tool", {}, addr=addr))
+    history = memory.get_history(addr)
+
+    assert first == "ok"
+    assert "Tool iteration limit reached" in second
+    assert executed == [("echo_tool", {})]
+    assert history[-1]["role"] == "tool"
+    assert "Tool iteration limit reached" in history[-1]["content"]
 
 
 def test_supports_tools_false_does_not_block_codex_without_classic_tools():
@@ -737,6 +901,49 @@ def test_agent_rejects_streaming_for_native_codex_backend():
 
     with pytest.raises(NotImplementedError, match="Streaming is not supported"):
         asyncio.run(run_streaming_agent())
+
+
+def test_agent_does_not_retry_non_retryable_provider_errors():
+    class ProviderError(RuntimeError):
+        non_retryable_provider_error = True
+
+    class NativeCodexMock:
+        is_native_thread_backend = True
+        supports_tools = False
+        supports_streaming = True
+
+        def __init__(self):
+            self.calls = 0
+
+        async def run_native(self, **kwargs):
+            self.calls += 1
+            raise ProviderError("usage limit exceeded")
+
+    native_client = NativeCodexMock()
+
+    class Factory:
+        def create_client(self, **kwargs):
+            return MagicMock()
+
+        def create_async_client(self, **kwargs):
+            return native_client
+
+    agent = BaseAgent(
+        config=AgentConfig(
+            name="CodexAgent",
+            system_prompt="Test agent.",
+            provider="codex",
+            model_name="gpt-5.3-codex",
+            max_retries=3,
+        ),
+        memory=MemoryService(store=InMemoryStore(), log_enabled=False),
+        memory_address=MemoryAddress(conversation_id="session1"),
+        client_factory=Factory(),
+    )
+
+    with pytest.raises(ProviderError):
+        asyncio.run(agent.arun("Hello"))
+    assert native_client.calls == 1
 
 
 def test_magicmock_does_not_activate_native_codex_branch():

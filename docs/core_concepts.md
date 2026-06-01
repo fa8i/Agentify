@@ -398,12 +398,18 @@ Supported:
 - Optional persistent context per Codex thread with `memory_mode="codex_thread"`
 - Prompt context built from Agentify memory and sent to native Codex turns
 - Normal `BaseAgent(tools=[...])` tools exposed to Codex through runtime MCP
+- Multimodal image inputs from Agentify `image_path` converted to Codex image inputs
+- Structured output through Codex `output_schema`
+- Streaming text deltas reconstructed from Codex turn events
 
 Not supported:
 
 - OpenAI-style `tool_calls`
 - Agentify's classic OpenAI-style tool loop
-- Real streaming
+
+Codex streaming is event-based. Agentify maps `item/agentMessage/delta` events
+to normal streaming chunks, but tool calls still happen inside Codex MCP turns
+rather than through OpenAI-style `assistant.tool_calls` responses.
 
 Use `provider="openai"` for agents that need OpenAI-style function calling.
 For Codex, Agentify adapts normal `tools=[...]` to MCP internally. Codex decides
@@ -443,7 +449,39 @@ Internally, Agentify starts a local runtime MCP bridge for the live `Tool`
 objects and passes that MCP configuration to the Codex thread. This does not
 require editing `~/.codex/config.toml` and it supports stateful Python tool
 objects, closures, and tools that share the agent's memory service. Tool calls
-use `AgentConfig.tool_timeout`.
+use `AgentConfig.tool_timeout` and respect `AgentConfig.max_tool_iter` within a
+Codex turn. MCP tool calls are persisted to Agentify memory as an assistant tool
+intent followed by a `tool` result message with `metadata.source="codex_mcp"`.
+
+Structured output can be requested with either a direct Codex schema:
+
+```python
+config = AgentConfig(
+    provider="codex",
+    model_name="gpt-5.3-codex",
+    model_kwargs={
+        "output_schema": {
+            "type": "object",
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+        }
+    },
+)
+```
+
+or with the OpenAI-style `response_format={"type": "json_schema", ...}` shape;
+Agentify maps it to Codex `output_schema` internally.
+
+For multimodal use, keep the normal Agentify API:
+
+```python
+agent.run("What is in this image?", image_path="diagram.png")
+```
+
+Agentify stores the multimodal user message in memory and sends the image part to
+Codex as an SDK image input. If the installed Codex SDK does not expose image
+input classes, Agentify degrades to an explicit text marker instead of silently
+pretending the image was inspected.
 
 By default, Codex uses Agentify-managed memory. Agentify formats the current
 conversation history from its configured memory store into the prompt sent to a
@@ -466,6 +504,8 @@ client_config_override={"memory_mode": "agentify"}
 
 In `memory_mode="agentify"`, Codex threads are not reused as memory. In
 `memory_mode="codex_thread"`, Codex thread IDs are reused per Agentify session.
+Call `agent.close()` or `await agent.aclose()` in long-running applications to
+release provider resources such as the runtime MCP bridge.
 
 Example with SQLite memory:
 
@@ -585,6 +625,13 @@ To validate the complete Agentify runtime with `BaseAgent(provider="codex")`, ru
 
 ```bash
 .venv/bin/python scripts/manual_codex_agentify_e2e.py --model gpt-5.3-codex
+```
+
+To run the broader manual diagnostics for structured output, image input,
+streaming, and runtime MCP tool limits, run:
+
+```bash
+.venv/bin/python scripts/manual_codex_feature_diagnostics.py --case all --image IMAGEN.png
 ```
 
 This script verifies both the BaseAgent response and the Agentify MCP debug log.

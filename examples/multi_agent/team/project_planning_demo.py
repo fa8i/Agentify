@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from agentify.core import BaseAgent, AgentConfig
 from agentify.memory import MemoryService
-from agentify.memory.stores.in_memory_store import InMemoryStore
+from agentify.memory.stores.sqlite_store import SQLiteStore
 from agentify.multi_agent import Team
 from agentify.extensions.tools import TimeTool, CalculatorTool
 
@@ -14,8 +14,10 @@ load_dotenv()
 
 
 def create_planning_team():
-    store = InMemoryStore()
-    memory = MemoryService(store=store, log_enabled=True, max_log_length=200)
+    store = SQLiteStore("./planning_team_memory.db")
+    memory = MemoryService(store=store, log_enabled=True)
+
+    tools = [CalculatorTool(), TimeTool()]
 
     # --- Worker 1: Infrastructure Researcher ---
 
@@ -25,18 +27,20 @@ def create_planning_team():
             "You are a platform engineer who analyzes on-premise to cloud migration projects. "
             "- You identify technical and organizational risks. "
             "- You make approximate cost estimations (order of magnitude, not exact figures). "
-            "- You can use calculation and current date tools to justify numbers and dates. "
-            "- Your output should be structured and oriented to be consumed by another agent, not directly by management."
+            "- You MUST use the current date tool before producing your answer. "
+            "- You MUST use the calculation tool to justify any numerical estimate. "
+            "- Your output should be structured and oriented to be consumed by another agent, not directly by management. "
+            "- Clearly include the assumptions used for the estimate."
         ),
-        provider="deepseek",
-        model_name="deepseek-v4-flash",
-        temperature=0.1,
+        provider="codex",
+        model_name="gpt-5.3-codex",
         max_tool_iter=10,
+        verbose=False,
     )
     researcher = BaseAgent(
         config=researcher_config,
         memory=memory,
-        tools=[CalculatorTool(), TimeTool()],
+        tools=tools,
     )
 
     # --- Worker 2: Executive Writer ---
@@ -46,16 +50,20 @@ def create_planning_team():
         system_prompt=(
             "You are a consultant who writes brief and clear executive summaries for management. "
             "- You receive technical notes and convert them into a report that is understandable for non-technical profiles. "
+            "- You MUST use the current date tool before writing the final report. "
+            "- You MUST use the calculation tool to validate or simplify any cost figures mentioned in the report. "
             "- Use simple language, structured in sections and with bullets when appropriate. "
             "- Keep the text to a maximum of ~300 words unless otherwise requested."
         ),
-        provider="deepseek",
-        model_name="deepseek-v4-flash",
-        temperature=0.4,
+        provider="codex",
+        model_name="gpt-5.3-codex",
+        max_tool_iter=10,
+        verbose=False,
     )
     writer = BaseAgent(
         config=writer_config,
         memory=memory,
+        tools=tools,
     )
 
     # --- Supervisor: Planner ---
@@ -64,20 +72,24 @@ def create_planning_team():
         name="MigrationPlanner",
         system_prompt=(
             "You are the project manager for an on-premise to cloud system migration. "
-            "- When the user makes a request, break down the problem into subtasks. "
+            "- When the user makes a request, break down the problem into a simple flow. "
+            "- First, you MUST use the current date tool to establish the reference date. "
+            "- Then, you MUST use the calculation tool to validate the main numerical assumptions. "
             "- Use the researcher (InfraResearcher) to obtain risks, estimates, and technical details. "
             "- Use the writer (ExecutiveWriter) to transform everything into a final report for management. "
             "- Always honestly explain the assumptions behind the estimates. "
             "- Do not reveal to the user that you are delegating to other internal agents; "
             "just deliver a coherent final result."
         ),
-        provider="deepseek",
-        model_name="deepseek-chat",
-        temperature=0.3,
+        provider="codex",
+        model_name="gpt-5.3-codex",
+        max_tool_iter=10,
+        verbose=False,
     )
     planner = BaseAgent(
         config=planner_config,
         memory=memory,
+        tools=tools,
     )
 
     team = Team(
