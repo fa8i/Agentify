@@ -542,13 +542,30 @@ class BaseAgent(Runnable):
 
         # Only add tools if they exist
         tools_payload = self.tool_defs
-        if tools_payload:
+        is_native_backend = getattr(async_client, "is_native_thread_backend", False) is True
+        native_mcp_tools = (
+            is_native_backend
+            and tools_payload
+            and getattr(async_client, "supports_tools", True) is False
+            and getattr(async_client, "supports_mcp_tools", False) is True
+        )
+
+        if tools_payload and not native_mcp_tools:
             common_params["tools"] = tools_payload
             common_params["tool_choice"] = tool_choice_param
 
-        is_native_backend = getattr(async_client, "is_native_thread_backend", False) is True
+        if native_mcp_tools:
+            common_params["agentify_tools"] = list(self._tools.values())
+            common_params["agentify_tool_timeout"] = self.config.tool_timeout
+            common_params["agentify_tool_executor"] = (
+                lambda tool_name, arguments: self._aexecute_mcp_tool_call(
+                    tool_name,
+                    arguments,
+                    addr=addr,
+                )
+            )
 
-        if is_native_backend and tools_payload and getattr(async_client, "supports_tools", True) is False:
+        if is_native_backend and tools_payload and not native_mcp_tools and getattr(async_client, "supports_tools", True) is False:
             raise NotImplementedError(
                 "Agentify's classic tool loop is not supported by the native Codex provider. "
                 "Use provider='openai' for OpenAI-style tool_calls, or expose tools to Codex "
@@ -716,6 +733,63 @@ class BaseAgent(Runnable):
             return json.dumps(
                 {"error": f"Unexpected error executing tool '{tool_name}': {e}"}
             )
+
+    async def _aexecute_mcp_tool_call(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        *,
+        addr: MemoryAddress,
+    ) -> str:
+        """Execute a Codex MCP tool call while preserving Agentify tool history."""
+        tool_call_id = f"mcp_{self.config.provider[:3]}_{uuid.uuid4().hex[:12]}"
+        arguments_json = json.dumps(arguments or {}, ensure_ascii=False)
+        tool_call = {
+            "id": tool_call_id,
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "arguments": arguments_json,
+            },
+        }
+
+        for cb in self.callbacks:
+            cb_func = getattr(cb, "on_assistant_tool_intent", None)
+            if callable(cb_func):
+                cb_func(self.config.name, "", [tool_name])
+
+        await self._aadd(
+            role="assistant",
+            content="",
+            tool_calls=[tool_call],
+            metadata={"source": "codex_mcp"},
+            addr=addr,
+        )
+
+        try:
+            result_content = await asyncio.wait_for(
+                self._aexecute_tool(tool_name, arguments or {}),
+                timeout=float(self.config.tool_timeout),
+            )
+        except asyncio.TimeoutError:
+            result_content = json.dumps(
+                {
+                    "error": (
+                        f"Tool '{tool_name}' execution timed out after "
+                        f"{self.config.tool_timeout} seconds."
+                    )
+                }
+            )
+
+        await self._aadd(
+            role="tool",
+            content=result_content,
+            tool_call_id=tool_call_id,
+            name=tool_name,
+            metadata={"source": "codex_mcp"},
+            addr=addr,
+        )
+        return result_content
 
     async def _aprocess_stream_response(
         self, response_stream: Any

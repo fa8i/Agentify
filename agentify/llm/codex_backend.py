@@ -1,6 +1,10 @@
 import logging
 import asyncio
+from collections.abc import Sequence
 from typing import Any, Dict
+
+from agentify.core.tool import Tool
+from agentify.mcp.runtime_bridge import RuntimeMCPBridge
 
 try:
     from openai_codex import AsyncCodex
@@ -47,9 +51,11 @@ class CodexThreadBackend:
         self.config = config
         self.timeout = timeout
         self.mcp_tools_enabled = bool(config.get("mcp_tools_enabled", True))
+        self.auto_mcp_tools = bool(config.get("auto_mcp_tools", True))
         self.memory_mode = str(config.get("memory_mode", "agentify"))
         if self.memory_mode not in {"agentify", "codex_thread"}:
             raise ValueError("Codex memory_mode must be 'agentify' or 'codex_thread'.")
+        self._runtime_mcp_bridge: RuntimeMCPBridge | None = None
 
         # agentify_session_id → codex_thread_id (string, not the live object)
         self.thread_ids: Dict[str, str] = {}
@@ -100,12 +106,22 @@ class CodexThreadBackend:
     # Thread lifecycle helpers
     # ------------------------------------------------------------------
 
-    async def _get_or_create_thread(self, session_id: str, model: str):
+    async def _get_or_create_thread(
+        self,
+        session_id: str,
+        model: str,
+        *,
+        thread_config: dict[str, Any] | None = None,
+    ):
         """Return a live AsyncThread, creating or resuming as needed."""
         if self.memory_mode == "agentify":
             logger.debug("Starting ephemeral Codex thread for Agentify-managed memory")
             try:
-                return await self.codex.thread_start(model=model, ephemeral=True)
+                return await self.codex.thread_start(
+                    model=model,
+                    ephemeral=True,
+                    config=thread_config,
+                )
             except TypeError:
                 return await self.codex.thread_start(model=model)
 
@@ -114,11 +130,15 @@ class CodexThreadBackend:
         if thread_id is not None:
             # Resume an existing Codex thread by its persisted ID
             logger.debug("Resuming Codex thread %s for session %s", thread_id, session_id)
-            thread = await self.codex.thread_resume(thread_id, model=model)
+            thread = await self.codex.thread_resume(
+                thread_id,
+                model=model,
+                config=thread_config,
+            )
         else:
             # First interaction — start a brand-new thread
             logger.debug("Starting new Codex thread for session %s", session_id)
-            thread = await self.codex.thread_start(model=model)
+            thread = await self.codex.thread_start(model=model, config=thread_config)
             self.thread_ids[session_id] = thread.id
             logger.info(
                 "Mapped session %s → codex thread %s", session_id, thread.id
@@ -146,7 +166,16 @@ class CodexThreadBackend:
             )
 
         prompt = self._build_prompt(prompt, kwargs.get("messages"))
-        thread = await self._get_or_create_thread(session_id, model)
+        thread_config = await self._build_thread_config(
+            kwargs.get("agentify_tools"),
+            tool_timeout=kwargs.get("agentify_tool_timeout"),
+            tool_executor=kwargs.get("agentify_tool_executor"),
+        )
+        thread = await self._get_or_create_thread(
+            session_id,
+            model,
+            thread_config=thread_config,
+        )
 
         if hasattr(thread, "turn"):
             response_content = await self._run_thread_turn_from_events(thread, prompt)
@@ -167,6 +196,39 @@ class CodexThreadBackend:
             response_content = self._extract_response_content(result)
 
         return DummyResponse(response_content)
+
+    async def _build_thread_config(
+        self,
+        tools: Any,
+        *,
+        tool_timeout: float | None = None,
+        tool_executor: Any = None,
+    ) -> dict[str, Any] | None:
+        if not tools:
+            return None
+        if not self.auto_mcp_tools:
+            raise NotImplementedError(
+                "Agentify tools were passed to the native Codex provider, but "
+                "auto_mcp_tools=False. Enable auto_mcp_tools or expose tools through "
+                "Agentify MCP stdio manually."
+            )
+        if not self.mcp_tools_enabled:
+            raise NotImplementedError(
+                "Agentify tools for the native Codex provider require MCP tools. "
+                "Set mcp_tools_enabled=True or use provider='openai' for classic tool_calls."
+            )
+        if not isinstance(tools, Sequence) or not all(
+            isinstance(tool, Tool) for tool in tools
+        ):
+            raise TypeError("agentify_tools must be a sequence of Agentify Tool objects.")
+
+        if self._runtime_mcp_bridge is None:
+            self._runtime_mcp_bridge = RuntimeMCPBridge()
+            await self._runtime_mcp_bridge.start()
+        self._runtime_mcp_bridge.update_tools(list(tools))
+        self._runtime_mcp_bridge.update_tool_timeout(tool_timeout)
+        self._runtime_mcp_bridge.update_tool_executor(tool_executor)
+        return self._runtime_mcp_bridge.codex_config()
 
     def _build_prompt(self, fallback_prompt: str, messages: Any) -> str:
         """Build the Codex turn prompt from Agentify memory when configured."""

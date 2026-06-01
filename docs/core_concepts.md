@@ -397,7 +397,7 @@ Supported:
 - Agentify-managed memory from SQLite, in-memory, Elastic, or any configured store
 - Optional persistent context per Codex thread with `memory_mode="codex_thread"`
 - Prompt context built from Agentify memory and sent to native Codex turns
-- Agentify tools exposed via MCP stdio
+- Normal `BaseAgent(tools=[...])` tools exposed to Codex through runtime MCP
 
 Not supported:
 
@@ -406,12 +406,44 @@ Not supported:
 - Real streaming
 
 Use `provider="openai"` for agents that need OpenAI-style function calling.
-For Codex, tools must be exposed through MCP. Codex decides and invokes those
-tools internally; it does not return `assistant_message.tool_calls` to Agentify.
-Agentify reconstructs the final answer from `thread.turn(...).stream()` events.
-Passing normal `tools=[...]` to `BaseAgent(provider="codex")` is intentionally
-not mapped to OpenAI `tool_calls`; expose those tools through an importable MCP
-registry instead.
+For Codex, Agentify adapts normal `tools=[...]` to MCP internally. Codex decides
+and invokes those tools through MCP; it does not return
+`assistant_message.tool_calls` to Agentify. Agentify reconstructs the final
+answer from `thread.turn(...).stream()` events.
+
+Example with Agentify tools:
+
+```python
+from agentify.core.agent import BaseAgent
+from agentify.core.config import AgentConfig
+from agentify.extensions.tools.filesystem import ListDirTool, ReadFileTool
+from agentify.memory.interfaces import MemoryAddress
+from agentify.memory.service import MemoryService
+from agentify.memory.stores.in_memory_store import InMemoryStore
+
+addr = MemoryAddress(conversation_id="codex-tools", agent_id="codex-agent")
+
+agent = BaseAgent(
+    config=AgentConfig(
+        name="CodexToolsAgent",
+        system_prompt="Use tools when they help answer the user.",
+        provider="codex",
+        model_name="gpt-5.3-codex",
+    ),
+    memory=MemoryService(store=InMemoryStore()),
+    memory_address=addr,
+    tools=[
+        ListDirTool(sandbox_dir="."),
+        ReadFileTool(sandbox_dir="."),
+    ],
+)
+```
+
+Internally, Agentify starts a local runtime MCP bridge for the live `Tool`
+objects and passes that MCP configuration to the Codex thread. This does not
+require editing `~/.codex/config.toml` and it supports stateful Python tool
+objects, closures, and tools that share the agent's memory service. Tool calls
+use `AgentConfig.tool_timeout`.
 
 By default, Codex uses Agentify-managed memory. Agentify formats the current
 conversation history from its configured memory store into the prompt sent to a
@@ -473,10 +505,10 @@ the current conversation state to Codex. If a `MemoryPolicy` trims or summarizes
 history, Codex receives the policy-filtered history rather than unbounded raw
 history.
 
-Agentify provides a transport-agnostic `AgentifyMCPServer` adapter that converts
-registered Agentify tools into MCP tool definitions and handlers. Wire this
-adapter into a local MCP transport, then configure Codex to load that MCP server
-from its Codex MCP configuration.
+For advanced deployments, Agentify also provides a transport-agnostic
+`AgentifyMCPServer` adapter that converts registered Agentify tools into MCP tool
+definitions and handlers. Use this when you want a long-running external MCP
+server or an explicit Codex config instead of the automatic runtime bridge.
 
 First define an importable registry that returns the tools for the current
 agent/scope:

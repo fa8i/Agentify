@@ -258,9 +258,9 @@ Supported providers:
 - `"llama"`
 - `"local"` (e.g., LM Studio, Ollama)
 - `"codex"` (experimental native Codex threads via ChatGPT OAuth; Agentify
-  memory is the default source of truth; Agentify tools must be exposed via MCP
-  stdio, not OpenAI-style `tool_calls`; responses are reconstructed from
-  `thread.turn(...).stream()` events; no real streaming)
+  memory is the default source of truth; normal `BaseAgent(tools=[...])` tools
+  are adapted to runtime MCP instead of OpenAI-style `tool_calls`; responses are
+  reconstructed from `thread.turn(...).stream()` events; no real streaming)
 
 Codex-specific `client_config_override` keys:
 
@@ -271,6 +271,10 @@ Codex-specific `client_config_override` keys:
   memory per Agentify session.
 - `mcp_tools_enabled`: `True` by default. Requires the Codex SDK
   `thread.turn(...).stream()` API when MCP tools are configured.
+- `auto_mcp_tools`: `True` by default. When `tools=[...]` are passed to a Codex
+  `BaseAgent`, Agentify starts a local runtime MCP bridge and passes that MCP
+  config to the Codex thread automatically. Set to `False` only if tools are
+  configured through an external MCP server manually.
 
 
 ## Multi-Agent

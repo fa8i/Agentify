@@ -67,8 +67,10 @@ class MockAsyncCodex:
     def __init__(self, **kwargs):
         self._thread_counter = 0
         self.resumed_ids = []
+        self.thread_start_kwargs = []
 
     async def thread_start(self, model: str, **kwargs):
+        self.thread_start_kwargs.append(kwargs)
         self._thread_counter += 1
         return MockThread(thread_id=f"codex_thread_{self._thread_counter}")
 
@@ -206,6 +208,59 @@ def test_codex_backend_codex_thread_mode_uses_latest_prompt(mock_codex):
 def test_codex_backend_rejects_invalid_memory_mode(mock_codex):
     with pytest.raises(ValueError, match="memory_mode"):
         CodexThreadBackend(config={"memory_mode": "bad"}, timeout=30)
+
+
+def test_codex_backend_auto_mcp_tools_adds_runtime_config(mock_codex):
+    tool = Tool(
+        schema={
+            "name": "echo_tool",
+            "description": "Echo text.",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
+        },
+        func=lambda text: f"echo: {text}",
+    )
+    backend = CodexThreadBackend(config={}, timeout=30)
+
+    try:
+        asyncio.run(
+            backend.run_native(
+                session_id="session1",
+                model="gpt-5.4",
+                prompt="Use echo_tool",
+                agentify_tools=[tool],
+            )
+        )
+    finally:
+        if backend._runtime_mcp_bridge is not None:
+            asyncio.run(backend._runtime_mcp_bridge.close())
+
+    config = backend.codex.thread_start_kwargs[0]["config"]
+    server = config["mcp_servers"]["agentify-runtime-tools"]
+    assert server["command"]
+    assert "agentify.mcp.runtime_server" in server["args"]
+    assert server["enabled_tools"] == ["echo_tool"]
+
+
+def test_codex_backend_auto_mcp_tools_can_be_disabled(mock_codex):
+    tool = Tool(
+        schema={"name": "example", "parameters": {"type": "object"}},
+        func=lambda: "ok",
+    )
+    backend = CodexThreadBackend(config={"auto_mcp_tools": False}, timeout=30)
+
+    with pytest.raises(NotImplementedError, match="auto_mcp_tools=False"):
+        asyncio.run(
+            backend.run_native(
+                session_id="session1",
+                model="gpt-5.4",
+                prompt="Use tool",
+                agentify_tools=[tool],
+            )
+        )
 
 
 def test_codex_backend_rejects_streaming(mock_codex):
@@ -466,6 +521,102 @@ def test_agent_rejects_tools_for_native_codex_backend():
 
     with pytest.raises(NotImplementedError, match="classic tool loop is not supported"):
         asyncio.run(agent.arun("Use the tool"))
+
+
+def test_agent_passes_tools_as_agentify_tools_for_native_codex_mcp_backend():
+    class NativeCodexMock:
+        is_native_thread_backend = True
+        supports_tools = False
+        supports_openai_tool_calls = False
+        supports_mcp_tools = True
+        supports_streaming = False
+
+        def __init__(self):
+            self.kwargs = None
+
+        async def run_native(self, **kwargs):
+            self.kwargs = kwargs
+            return DummyResponse("ok")
+
+    native_client = NativeCodexMock()
+
+    class Factory:
+        def create_client(self, **kwargs):
+            return MagicMock()
+
+        def create_async_client(self, **kwargs):
+            return native_client
+
+    tool = Tool(
+        schema={"name": "example", "parameters": {"type": "object"}},
+        func=lambda: "ok",
+    )
+    agent = BaseAgent(
+        config=AgentConfig(
+            name="CodexAgent",
+            system_prompt="Test agent.",
+            provider="codex",
+            model_name="gpt-5.3-codex",
+            tool_timeout=17,
+        ),
+        memory=MemoryService(store=InMemoryStore(), log_enabled=False),
+        memory_address=MemoryAddress(conversation_id="session1"),
+        client_factory=Factory(),
+        tools=[tool],
+    )
+
+    assert asyncio.run(agent.arun("Use the tool")) == "ok"
+    assert native_client.kwargs is not None
+    assert native_client.kwargs["agentify_tools"] == [tool]
+    assert native_client.kwargs["agentify_tool_timeout"] == 17
+    assert callable(native_client.kwargs["agentify_tool_executor"])
+    assert "tools" not in native_client.kwargs
+    assert "tool_choice" not in native_client.kwargs
+
+
+def test_codex_mcp_tool_call_is_recorded_in_memory():
+    tool = Tool(
+        schema={
+            "name": "echo_tool",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
+        },
+        func=lambda text: f"echo: {text}",
+    )
+    memory = MemoryService(store=InMemoryStore(), log_enabled=False)
+    addr = MemoryAddress(conversation_id="session1")
+    agent = BaseAgent(
+        config=AgentConfig(
+            name="CodexAgent",
+            system_prompt="Test agent.",
+            provider="codex",
+            model_name="gpt-5.3-codex",
+        ),
+        memory=memory,
+        memory_address=addr,
+        tools=[tool],
+    )
+
+    result = asyncio.run(
+        agent._aexecute_mcp_tool_call(
+            "echo_tool",
+            {"text": "hola"},
+            addr=addr,
+        )
+    )
+    history = memory.get_history(addr)
+
+    assert result == "echo: hola"
+    assert history[0]["role"] == "assistant"
+    assert history[0]["source"] == "codex_mcp"
+    assert history[0]["tool_calls"][0]["function"]["name"] == "echo_tool"
+    assert history[1]["role"] == "tool"
+    assert history[1]["name"] == "echo_tool"
+    assert history[1]["content"] == "echo: hola"
+    assert history[1]["source"] == "codex_mcp"
 
 
 def test_supports_tools_false_does_not_block_codex_without_classic_tools():
