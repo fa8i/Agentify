@@ -12,7 +12,7 @@ from agentify.memory.async_service import AsyncMemoryService
 from agentify.memory.interfaces import MemoryAddress
 from agentify.memory.policies import MemoryPolicy
 
-__version__ = "0.3.1"
+__version__ = "0.5.0"
 
 __all__ = [
     "BaseAgent",

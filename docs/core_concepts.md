@@ -379,6 +379,19 @@ threads. By default, Agentify remains the source of truth for memory: the
 provider reads the configured Agentify memory store, formats that conversation
 state into the Codex turn prompt, and starts a fresh Codex thread for each turn.
 
+Install and authenticate Codex first:
+
+```bash
+pip install agentify-core[codex]
+codex login
+codex login status
+```
+
+Use ChatGPT login in the Codex CLI flow when you want to run the Codex models
+available to your ChatGPT account. `codex login status` should report an active
+login before running Agentify with `provider="codex"`. Model availability and
+quota depend on the Codex CLI version and the authenticated account.
+
 ```python
 config = AgentConfig(
     provider="codex",

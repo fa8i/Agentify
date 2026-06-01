@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentify-core"
-version = "0.4.1"
+version = "0.5.0"
 description = "Framework-agnostic AI agent library for building single and multi-agent systems"
 readme = "README_PYPI.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Fabian M", email = "fabianmp_98@hotmail.com"}
 ]
@@ -26,7 +26,6 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -81,6 +80,7 @@ all = [
     "elasticsearch>=8.0.0",
     "requests>=2.25.0",
     "gradio==5.49.1",
+    "openai-codex>=0.1.0b1,<1.0.0",
 ]
 
 # Desarrollo y testing
