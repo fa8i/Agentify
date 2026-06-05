@@ -372,6 +372,343 @@ config = AgentConfig(
 )
 ```
 
+### Codex Native Provider
+
+The `codex` provider uses ChatGPT OAuth via `codex login` and native Codex
+threads. By default, Agentify remains the source of truth for memory: the
+provider reads the configured Agentify memory store, formats that conversation
+state into the Codex turn prompt, and starts a fresh Codex thread for each turn.
+
+Install and authenticate Codex first:
+
+```bash
+pip install agentify-core[codex]
+codex login
+codex login status
+```
+
+Use ChatGPT login in the Codex CLI flow when you want to run the Codex models
+available to your ChatGPT account. `codex login status` should report an active
+login before running Agentify with `provider="codex"`. Model availability and
+quota depend on the Codex CLI version and the authenticated account.
+
+```python
+config = AgentConfig(
+    provider="codex",
+    model_name="gpt-5.3-codex"
+)
+```
+
+The model is always taken from `AgentConfig.model_name`. In the real validation
+environment, `gpt-5.3-codex` worked. Other models can fail depending on Codex
+CLI version, ChatGPT account type, and quota.
+
+Supported:
+
+- ChatGPT OAuth through the Codex CLI
+- Native Codex threads
+- Agentify-managed memory from SQLite, in-memory, Elastic, or any configured store
+- Optional persistent context per Codex thread with `memory_mode="codex_thread"`
+- Prompt context built from Agentify memory and sent to native Codex turns
+- Normal `BaseAgent(tools=[...])` tools exposed to Codex through runtime MCP
+- Multimodal image inputs from Agentify `image_path` converted to Codex image inputs
+- Structured output through Codex `output_schema`
+- Streaming text deltas reconstructed from Codex turn events
+
+Not supported:
+
+- OpenAI-style `tool_calls`
+- Agentify's classic OpenAI-style tool loop
+
+Codex streaming is event-based. Agentify maps `item/agentMessage/delta` events
+to normal streaming chunks, but tool calls still happen inside Codex MCP turns
+rather than through OpenAI-style `assistant.tool_calls` responses.
+
+Use `provider="openai"` for agents that need OpenAI-style function calling.
+For Codex, Agentify adapts normal `tools=[...]` to MCP internally. Codex decides
+and invokes those tools through MCP; it does not return
+`assistant_message.tool_calls` to Agentify. Agentify reconstructs the final
+answer from `thread.turn(...).stream()` events.
+
+Example with Agentify tools:
+
+```python
+from agentify.core.agent import BaseAgent
+from agentify.core.config import AgentConfig
+from agentify.extensions.tools.filesystem import ListDirTool, ReadFileTool
+from agentify.memory.interfaces import MemoryAddress
+from agentify.memory.service import MemoryService
+from agentify.memory.stores.in_memory_store import InMemoryStore
+
+addr = MemoryAddress(conversation_id="codex-tools", agent_id="codex-agent")
+
+agent = BaseAgent(
+    config=AgentConfig(
+        name="CodexToolsAgent",
+        system_prompt="Use tools when they help answer the user.",
+        provider="codex",
+        model_name="gpt-5.3-codex",
+    ),
+    memory=MemoryService(store=InMemoryStore()),
+    memory_address=addr,
+    tools=[
+        ListDirTool(sandbox_dir="."),
+        ReadFileTool(sandbox_dir="."),
+    ],
+)
+```
+
+Internally, Agentify starts a local runtime MCP bridge for the live `Tool`
+objects and passes that MCP configuration to the Codex thread. This does not
+require editing `~/.codex/config.toml` and it supports stateful Python tool
+objects, closures, and tools that share the agent's memory service. Tool calls
+use `AgentConfig.tool_timeout` and respect `AgentConfig.max_tool_iter` within a
+Codex turn. MCP tool calls are persisted to Agentify memory as an assistant tool
+intent followed by a `tool` result message with `metadata.source="codex_mcp"`.
+
+Structured output can be requested with either a direct Codex schema:
+
+```python
+config = AgentConfig(
+    provider="codex",
+    model_name="gpt-5.3-codex",
+    model_kwargs={
+        "output_schema": {
+            "type": "object",
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+        }
+    },
+)
+```
+
+or with the OpenAI-style `response_format={"type": "json_schema", ...}` shape;
+Agentify maps it to Codex `output_schema` internally.
+
+For multimodal use, keep the normal Agentify API:
+
+```python
+agent.run("What is in this image?", image_path="diagram.png")
+```
+
+Agentify stores the multimodal user message in memory and sends the image part to
+Codex as an SDK image input. If the installed Codex SDK does not expose image
+input classes, Agentify degrades to an explicit text marker instead of silently
+pretending the image was inspected.
+
+By default, Codex uses Agentify-managed memory. Agentify formats the current
+conversation history from its configured memory store into the prompt sent to a
+fresh Codex thread, so SQLite/in-memory/Elastic remain the source of truth. To
+opt into native Codex thread memory instead, configure:
+
+```python
+config = AgentConfig(
+    provider="codex",
+    model_name="gpt-5.3-codex",
+    client_config_override={"memory_mode": "codex_thread"}
+)
+```
+
+The default is equivalent to:
+
+```python
+client_config_override={"memory_mode": "agentify"}
+```
+
+In `memory_mode="agentify"`, Codex threads are not reused as memory. In
+`memory_mode="codex_thread"`, Codex thread IDs are reused per Agentify session.
+Call `agent.close()` or `await agent.aclose()` in long-running applications to
+release provider resources such as the runtime MCP bridge.
+
+Example with SQLite memory:
+
+```python
+from agentify.core.agent import BaseAgent
+from agentify.core.config import AgentConfig
+from agentify.memory.interfaces import MemoryAddress
+from agentify.memory.service import MemoryService
+from agentify.memory.stores.sqlite_store import SQLiteStore
+
+memory = MemoryService(store=SQLiteStore("agentify-memory.db"))
+addr = MemoryAddress(
+    tenant_id="tenant-1",
+    user_id="user-1",
+    conversation_id="conversation-1",
+    agent_id="codex-agent",
+)
+
+agent = BaseAgent(
+    config=AgentConfig(
+        name="CodexAgent",
+        system_prompt="You are a helpful assistant.",
+        provider="codex",
+        model_name="gpt-5.3-codex",
+    ),
+    memory=memory,
+    memory_address=addr,
+)
+
+agent.run("Remember that I live in Madrid.")
+agent.run("Where do I live?")
+```
+
+Both user turns and assistant responses are persisted in SQLite under the same
+`MemoryAddress`. On the second call, Agentify reads that SQLite history and sends
+the current conversation state to Codex. If a `MemoryPolicy` trims or summarizes
+history, Codex receives the policy-filtered history rather than unbounded raw
+history.
+
+For advanced deployments, Agentify also provides a transport-agnostic
+`AgentifyMCPServer` adapter that converts registered Agentify tools into MCP tool
+definitions and handlers. Use this when you want a long-running external MCP
+server or an explicit Codex config instead of the automatic runtime bridge.
+
+First define an importable registry that returns the tools for the current
+agent/scope:
+
+```python
+# my_project/tools.py
+from agentify.core.tool import tool
+
+@tool
+def echo_tool(text: str) -> str:
+    """Echo text back to the caller."""
+    return f"echo: {text}"
+
+def build_agentify_tools():
+    return [echo_tool]
+```
+
+Generate the Codex MCP config block:
+
+```bash
+agentify codex mcp config \
+  --name agentify-my-agent \
+  --registry my_project.tools:build_agentify_tools \
+  --allow echo_tool \
+  --command /absolute/path/to/.venv/bin/python
+```
+
+Add the generated block to `~/.codex/config.toml` for the first version. Global
+configuration is the recommended path initially because project-scoped
+`.codex/config.toml` can behave differently across Codex CLI, Desktop, and IDE
+surfaces.
+
+Equivalent manual config:
+
+```toml
+[mcp_servers.agentify-my-agent]
+command = "python"
+args = [
+  "-m", "agentify.mcp.server",
+  "--registry", "my_project.tools:build_agentify_tools",
+  "--allow", "echo_tool"
+]
+enabled_tools = ["echo_tool"]
+```
+
+Manual verification:
+
+- Run `codex login` if needed.
+- Add the config block to `~/.codex/config.toml`.
+- Start Codex and ask it to call `echo_tool` with a short string.
+- Confirm the MCP tool result returns `echo: <your string>`.
+
+#### Codex MCP end-to-end validation
+
+The repository includes a manual validation script for the full flow:
+
+```text
+Agentify provider="codex"
+  -> CodexThreadBackend
+  -> openai-codex SDK
+  -> thread.turn(prompt).stream()
+  -> Codex MCP config
+  -> Agentify MCP stdio server
+  -> echo_tool
+```
+
+Run it from the project root after `codex login`:
+
+```bash
+.venv/bin/python scripts/manual_codex_mcp_e2e.py
+```
+
+To validate the complete Agentify runtime with `BaseAgent(provider="codex")`, run:
+
+```bash
+.venv/bin/python scripts/manual_codex_agentify_e2e.py --model gpt-5.3-codex
+```
+
+To run the broader manual diagnostics for structured output, image input,
+streaming, and runtime MCP tool limits, run:
+
+```bash
+.venv/bin/python scripts/manual_codex_feature_diagnostics.py --case all --image IMAGEN.png
+```
+
+This script verifies both the BaseAgent response and the Agentify MCP debug log.
+The expected success marker is `ECHO_FROM_AGENTIFY: hola-agentify` and the log
+must show `call_tool called: echo_tool`.
+
+The script:
+
+- Creates a temporary backup of `~/.codex/config.toml`.
+- Appends a temporary `[mcp_servers.agentify-e2e]` block using the absolute
+  Python executable running the script.
+- Starts Codex through `CodexThreadBackend` and asks it to call `echo_tool`.
+- Verifies the response contains `ECHO_FROM_AGENTIFY: hola-agentify`.
+- Restores the original Codex config before exit unless `--keep-config` is used.
+
+Exit codes:
+
+- `0`: Codex invoked the MCP tool and returned the expected marker.
+- `1`: Codex returned a final response, but it did not contain the expected marker.
+- `3`: The Agentify MCP debug log shows `echo_tool` was invoked, but the
+  `openai-codex` SDK turn result did not expose a final response containing the
+  tool output.
+
+Agentify uses the Codex turn event stream (`thread.turn(...).stream()`) for the
+native Codex provider because the convenience `thread.run(prompt)` API can
+collapse MCP turns into `TurnResult(final_response=None, items=[])`. The event
+stream exposes `item/agentMessage/delta`, `item/completed` for MCP calls, and
+`turn/completed`, which is enough to reconstruct a usable response.
+
+If an installed `openai-codex` SDK does not expose `thread.turn`, Agentify only
+falls back to `thread.run()` when MCP tools are explicitly disabled through the
+backend config. MCP-backed tools require event streaming.
+
+Current diagnostic status:
+
+- MCP server loaded: yes
+- MCP tools invoked: yes
+- MCP output visible in events: yes
+- `thread.run(prompt).final_response` reliable for MCP turns: no
+
+Alternative dynamic tools route:
+
+- Route A, MCP external: Codex loads `AgentifyMCPServer` from Codex config and
+  Agentify reconstructs the final response from Codex turn events. This is the
+  implemented route.
+- Route B, dynamic tools: the installed `openai-codex` SDK advertises
+  `experimentalApi=True` internally, but its public Python API currently exposes
+  no client methods for registering dynamic tools or responding to dynamic tool
+  calls directly. This route is not implemented.
+
+Debug logs from the Agentify MCP subprocess are written to
+`/tmp/agentify-codex-mcp-e2e.log` by default. The stdio server also supports
+manual logging with:
+
+```bash
+python -m agentify.mcp.server \
+  --registry tests.fixtures.codex_mcp_registry:build_agentify_tools \
+  --allow echo_tool \
+  --debug-log /tmp/agentify-mcp.log
+```
+
+This manual E2E is intentionally not part of CI because it requires local
+`codex login` authentication and a ChatGPT account with Codex access.
+
 ## Next Steps
 
 - [Multi-Agent Systems](multi_agent.md)

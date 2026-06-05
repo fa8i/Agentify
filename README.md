@@ -28,6 +28,7 @@ It provides simple abstractions for memory, tools, and orchestration without the
 | **Memory Service** | Pluggable backends (In-Memory, SQLite, Redis, Elasticsearch) with configurable TTL, limits and token budgets. |
 | **Tools & MCP** | Easy `@tool` decorator, custom classes, and full **Model Context Protocol (MCP)** integration. |
 | **Local Models** | First-class support for **LM Studio**, **Ollama**, and other local servers via OpenAI-compatible endpoints. |
+| **Codex Provider** | Experimental native Codex support with Agentify memory, runtime MCP tools, image input, structured output, and event streaming. |
 | **Async & Parallel** | Dual API: simple `run()` for sync usage and `arun()` for native async execution. |
 | **Observability** | Comprehensive callback system for monitoring, debugging, and tracing agent thoughts. |
 | **Reasoning & Planning** | Configure thinking depth, chain-of-thought storage, and real-time reasoning logs. |
@@ -45,6 +46,19 @@ For all optional features (Redis, vector stores, etc.):
 ```bash
 pip install agentify-core[all]
 ```
+
+For native Codex support:
+
+```bash
+pip install agentify-core[codex]
+codex login
+codex login status
+```
+
+`codex login` starts the Codex CLI authentication flow. Use ChatGPT login to run
+Codex models available to your ChatGPT account. `codex login status` confirms the
+active session; available models and quota depend on your account and Codex CLI
+version.
 
 ## Quick Start
 
@@ -91,6 +105,31 @@ print(response)
 # Async usage is also available:
 # response = await agent.arun(user_input="What time is it?")
 ```
+
+## Native Codex Provider
+
+Codex support uses ChatGPT OAuth via the Codex CLI and keeps the normal Agentify
+API:
+
+```python
+agent = BaseAgent(
+    config=AgentConfig(
+        name="CodexAgent",
+        system_prompt="You are a helpful assistant.",
+        provider="codex",
+        model_name="gpt-5.3-codex",
+        stream=True,
+    ),
+    memory=memory,
+    memory_address=addr,
+    tools=[get_time],
+)
+```
+
+Agentify keeps its memory stores as the source of truth and adapts normal
+`tools=[...]` to Codex through runtime MCP internally. The provider also supports
+structured output, image input via `image_path`, streaming text deltas, and
+persisted MCP tool-call history.
 
 ## Documentation
 

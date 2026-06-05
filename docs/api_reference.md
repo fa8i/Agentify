@@ -257,6 +257,37 @@ Supported providers:
 - `"anthropic"`
 - `"llama"`
 - `"local"` (e.g., LM Studio, Ollama)
+- `"codex"` (experimental native Codex threads via ChatGPT OAuth; Agentify
+  memory is the default source of truth; normal `BaseAgent(tools=[...])` tools
+  are adapted to runtime MCP instead of OpenAI-style `tool_calls`; responses are
+  reconstructed or streamed from `thread.turn(...).stream()` events)
+
+Codex-specific `client_config_override` keys:
+
+- `memory_mode`: `"agentify"` by default. Uses the configured Agentify memory
+  store and sends the current history returned by `MemoryService` to a fresh
+  Codex thread each turn. Stores such as SQLite, in-memory, and Elastic remain
+  the memory source of truth. Set `"codex_thread"` to reuse native Codex thread
+  memory per Agentify session.
+- `mcp_tools_enabled`: `True` by default. Requires the Codex SDK
+  `thread.turn(...).stream()` API when MCP tools are configured.
+- `auto_mcp_tools`: `True` by default. When `tools=[...]` are passed to a Codex
+  `BaseAgent`, Agentify starts a local runtime MCP bridge and passes that MCP
+  config to the Codex thread automatically. Set to `False` only if tools are
+  configured through an external MCP server manually.
+- `output_schema`: optional JSON schema passed to Codex `thread.turn(...)` for
+  structured output. OpenAI-style `response_format={"type": "json_schema", ...}`
+  is also mapped to this internally.
+
+Codex-specific notes:
+
+- `stream=True` emits text deltas from Codex turn events.
+- `image_path` multimodal input is converted to Codex SDK image input when
+  supported by the installed SDK.
+- Runtime MCP tool calls respect `AgentConfig.tool_timeout` and
+  `AgentConfig.max_tool_iter`.
+- Use `agent.close()` or `await agent.aclose()` to release provider resources in
+  long-running applications.
 
 
 ## Multi-Agent
@@ -445,6 +476,39 @@ class WriteFileTool(Tool):
     def __init__(self, sandbox_dir: Optional[str] = None)
 ```
 Writes content to files.
+
+## MCP
+
+### AgentifyMCPServer
+
+Transport-agnostic adapter for exposing a scoped set of Agentify tools as MCP
+tool definitions and handlers. This is the foundation for using tools with the
+native Codex provider, where Codex consumes tools through MCP instead of
+OpenAI-style `tool_calls`.
+
+```python
+class AgentifyMCPServer:
+    def __init__(self, tools: Sequence[Tool], *, allowlist: Iterable[str] | None = None)
+    def list_tools(self) -> list[mcp.types.Tool]
+    async def call_tool(self, name: str, arguments: Mapping[str, Any] | None = None) -> mcp.types.CallToolResult
+```
+
+Use `allowlist` to limit which Agentify tools are exposed to Codex through MCP.
+
+Stdio entrypoint:
+
+```bash
+python -m agentify.mcp.server \
+  --registry my_project.tools:build_agentify_tools \
+  --allow search_docs \
+  --debug-log /tmp/agentify-mcp.log
+```
+
+Config helper:
+
+```bash
+agentify codex mcp config --name agentify-my-agent --registry my_project.tools:build_agentify_tools --allow search_docs
+```
 
 ## Callbacks
 
