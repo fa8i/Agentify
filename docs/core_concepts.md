@@ -395,12 +395,12 @@ quota depend on the Codex CLI version and the authenticated account.
 ```python
 config = AgentConfig(
     provider="codex",
-    model_name="gpt-5.3-codex"
+    model_name="gpt-5.4"
 )
 ```
 
 The model is always taken from `AgentConfig.model_name`. In the real validation
-environment, `gpt-5.3-codex` worked. Other models can fail depending on Codex
+environment, `gpt-5.4` worked. Other models can fail depending on Codex
 CLI version, ChatGPT account type, and quota.
 
 Supported:
@@ -447,7 +447,7 @@ agent = BaseAgent(
         name="CodexToolsAgent",
         system_prompt="Use tools when they help answer the user.",
         provider="codex",
-        model_name="gpt-5.3-codex",
+        model_name="gpt-5.4",
     ),
     memory=MemoryService(store=InMemoryStore()),
     memory_address=addr,
@@ -471,7 +471,7 @@ Structured output can be requested with either a direct Codex schema:
 ```python
 config = AgentConfig(
     provider="codex",
-    model_name="gpt-5.3-codex",
+    model_name="gpt-5.4",
     model_kwargs={
         "output_schema": {
             "type": "object",
@@ -504,7 +504,7 @@ opt into native Codex thread memory instead, configure:
 ```python
 config = AgentConfig(
     provider="codex",
-    model_name="gpt-5.3-codex",
+    model_name="gpt-5.4",
     client_config_override={"memory_mode": "codex_thread"}
 )
 ```
@@ -611,7 +611,7 @@ agent = BaseAgent(
         name="CodexAgent",
         system_prompt="You are a helpful assistant.",
         provider="codex",
-        model_name="gpt-5.3-codex",
+        model_name="gpt-5.4",
     ),
     memory=memory,
     memory_address=addr,
@@ -706,7 +706,7 @@ Run it from the project root after `codex login`:
 To validate the complete Agentify runtime with `BaseAgent(provider="codex")`, run:
 
 ```bash
-.venv/bin/python scripts/manual_codex_agentify_e2e.py --model gpt-5.3-codex
+.venv/bin/python scripts/manual_codex_agentify_e2e.py --model gpt-5.4
 ```
 
 To run the broader manual diagnostics for structured output, image input,

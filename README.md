@@ -117,7 +117,7 @@ agent = BaseAgent(
         name="CodexAgent",
         system_prompt="You are a helpful assistant.",
         provider="codex",
-        model_name="gpt-5.3-codex",
+        model_name="gpt-5.4",
         stream=True,
     ),
     memory=memory,
@@ -130,6 +130,19 @@ Agentify keeps its memory stores as the source of truth and adapts normal
 `tools=[...]` to Codex through runtime MCP internally. The provider also supports
 structured output, image input via `image_path`, streaming text deltas, and
 persisted MCP tool-call history.
+
+For interactive multi-turn assistants, prefer native Codex thread memory — it
+avoids resending the full history each turn (~1.5–1.7x faster per turn in our
+benchmarks) and can persist sessions across restarts:
+
+```python
+client_config_override={
+    "memory_mode": "codex_thread",
+    "thread_map_path": "~/.agentify/codex_threads.json",  # optional
+}
+```
+
+See [Core Concepts](docs/core_concepts.md) for how Codex thread memory works.
 
 ## Documentation
 

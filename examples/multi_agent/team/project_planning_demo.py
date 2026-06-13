@@ -33,7 +33,7 @@ def create_planning_team():
             "- Clearly include the assumptions used for the estimate."
         ),
         provider="codex",
-        model_name="gpt-5.3-codex",
+        model_name="gpt-5.4",
         max_tool_iter=10,
         verbose=False,
     )
@@ -56,7 +56,7 @@ def create_planning_team():
             "- Keep the text to a maximum of ~300 words unless otherwise requested."
         ),
         provider="codex",
-        model_name="gpt-5.3-codex",
+        model_name="gpt-5.4",
         max_tool_iter=10,
         verbose=False,
     )
@@ -82,7 +82,7 @@ def create_planning_team():
             "just deliver a coherent final result."
         ),
         provider="codex",
-        model_name="gpt-5.3-codex",
+        model_name="gpt-5.4",
         max_tool_iter=10,
         verbose=False,
     )
