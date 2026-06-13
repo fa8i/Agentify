@@ -714,6 +714,78 @@ def test_codex_backend_persists_thread_map(mock_codex, tmp_path):
     assert backend2.codex._thread_counter == 0
 
 
+def test_codex_thread_mode_seeds_system_prompt_on_first_turn_only(mock_codex):
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+    messages = [
+        {"role": "system", "content": "You are Janus, a personal assistant."},
+        {"role": "user", "content": "hi"},
+    ]
+
+    first = asyncio.run(
+        backend.run_native(
+            session_id="s1", model="gpt-5.4", prompt="hi", messages=messages
+        )
+    )
+    content = first.choices[0].message.content
+    # The first turn carries the system prompt so Codex sees the agent identity.
+    assert "SYSTEM INSTRUCTIONS" in content
+    assert "You are Janus, a personal assistant." in content
+
+    second = asyncio.run(
+        backend.run_native(
+            session_id="s1",
+            model="gpt-5.4",
+            prompt="again",
+            messages=messages + [{"role": "user", "content": "again"}],
+        )
+    )
+    # Subsequent turns on the persistent thread must NOT re-send the system prompt.
+    assert "SYSTEM INSTRUCTIONS" not in second.choices[0].message.content
+
+
+def test_codex_drop_session_forgets_thread_and_persists(mock_codex, tmp_path):
+    map_path = str(tmp_path / "threads.json")
+    backend = CodexThreadBackend(
+        config={"memory_mode": "codex_thread", "thread_map_path": map_path},
+        timeout=30,
+    )
+    asyncio.run(backend.run_native(session_id="s1", model="gpt-5.4", prompt="hi"))
+    assert backend.thread_ids["s1"] == "codex_thread_1"
+
+    dropped = backend.drop_session("s1")
+    assert dropped == "codex_thread_1"
+    assert "s1" not in backend.thread_ids
+
+    import json as json_module
+
+    with open(map_path, encoding="utf-8") as handle:
+        assert json_module.load(handle) == {}
+
+    # Next turn for the same session starts a brand-new thread, not a resume.
+    asyncio.run(backend.run_native(session_id="s1", model="gpt-5.4", prompt="hi again"))
+    assert backend.codex.resumed_ids == []
+    assert backend.thread_ids["s1"] == "codex_thread_2"
+
+
+def test_codex_thread_map_save_merges_concurrent_backends(mock_codex, tmp_path):
+    map_path = str(tmp_path / "threads.json")
+    cfg = {"memory_mode": "codex_thread", "thread_map_path": map_path}
+
+    backend_a = CodexThreadBackend(config=cfg, timeout=30)
+    backend_b = CodexThreadBackend(config=cfg, timeout=30)
+
+    # Both start before either persists (the concurrent CLI + Telegram case).
+    asyncio.run(backend_a.run_native(session_id="cli", model="gpt-5.4", prompt="a"))
+    asyncio.run(backend_b.run_native(session_id="telegram", model="gpt-5.4", prompt="b"))
+
+    import json as json_module
+
+    with open(map_path, encoding="utf-8") as handle:
+        stored = json_module.load(handle)
+    # Backend B's save must not clobber backend A's session.
+    assert set(stored) == {"cli", "telegram"}
+
+
 def test_codex_backend_recovers_when_resumed_thread_is_missing(mock_codex):
     backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
     backend.thread_ids["s1"] = "stale_thread"

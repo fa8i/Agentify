@@ -17,7 +17,7 @@ class AgentConfig:
     system_prompt: str
     provider: str
     model_name: str
-    temperature: float = 1
+    temperature: float = 1.0
     timeout: int = 300
     tool_timeout: int = 300
     stream: bool = False

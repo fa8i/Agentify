@@ -758,11 +758,13 @@ class BaseAgent(Runnable):
             )
 
     async def _aprocess_stream_response(
-        self, response_stream: Any
+        self, response_stream: Any, sink: Optional[Dict[str, Any]] = None
     ) -> AsyncGenerator[str, None]:
-        """
-        Process async streaming response, yielding content chunks.
-        Returns tool calls via StopAsyncIteration or a final return.
+        """Process an async streaming response, yielding content chunks.
+
+        Assembled tool calls and reasoning go into ``sink`` (keys ``"tool_calls"``
+        and ``"reasoning"``); a per-call ``sink`` keeps concurrent runs isolated.
+        When ``sink`` is ``None`` they fall back to ``self._last_stream_*``.
         """
         tool_call_assembler: Dict[int, Dict[str, Any]] = {}
         full_content = []
@@ -811,8 +813,7 @@ class BaseAgent(Runnable):
         for cb in self.callbacks:
             cb.on_llm_end(full_response_text)
 
-        # Store results in instance for retrieval after iteration
-        self._last_stream_tool_calls = []
+        stream_tool_calls: List[Dict[str, Any]] = []
         for idx in sorted(tool_call_assembler.keys()):
             call_data = tool_call_assembler[idx]
             if not call_data.get("id"):
@@ -820,9 +821,16 @@ class BaseAgent(Runnable):
                     f"s_{self.config.provider[:3]}_tc_{idx}_{uuid.uuid4().hex[:6]}"
                 )
             if call_data.get("function", {}).get("name"):
-                self._last_stream_tool_calls.append(call_data)
-        
-        self._last_stream_reasoning = "".join(full_reasoning) or None
+                stream_tool_calls.append(call_data)
+
+        stream_reasoning = "".join(full_reasoning) or None
+
+        if sink is not None:
+            sink["tool_calls"] = stream_tool_calls
+            sink["reasoning"] = stream_reasoning
+        else:
+            self._last_stream_tool_calls = stream_tool_calls
+            self._last_stream_reasoning = stream_reasoning
 
     async def _aexecute_agent_loop(
         self,
@@ -867,14 +875,15 @@ class BaseAgent(Runnable):
             full_reasoning_content: Optional[str] = None
 
             if self.config.stream:
-                # Process async stream
-                async for content_chunk in self._aprocess_stream_response(response_or_stream):
+                stream_sink: Dict[str, Any] = {}
+                async for content_chunk in self._aprocess_stream_response(
+                    response_or_stream, sink=stream_sink
+                ):
                     yield content_chunk
                     current_turn_content_parts.append(content_chunk)
                     accumulated_response.append(content_chunk)
-                # Retrieve tool calls from stream processing
-                assembled_tool_calls = getattr(self, "_last_stream_tool_calls", [])
-                full_reasoning_content = getattr(self, "_last_stream_reasoning", None)
+                assembled_tool_calls = stream_sink.get("tool_calls", [])
+                full_reasoning_content = stream_sink.get("reasoning", None)
             else:
                 content, assembled_tool_calls, full_reasoning_content = self._process_sync_response(
                     response_or_stream

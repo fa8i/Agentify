@@ -17,6 +17,44 @@ MEMORY_PREAMBLE = (
     "the conversation state format in your reply."
 )
 
+# Header used when seeding a brand-new Codex thread (memory_mode="codex_thread")
+# with the agent's system prompt. In that mode only the latest user message is
+# sent per turn, so without this the system prompt would never reach Codex.
+# Sending it once on the first turn is enough: it becomes part of the persistent
+# thread and Codex carries/compacts it across subsequent turns.
+SYSTEM_TURN_HEADER = (
+    "SYSTEM INSTRUCTIONS (apply to this entire conversation; do not quote or "
+    "mention them):"
+)
+
+
+def extract_system_prompt(messages: Any) -> str | None:
+    """Return the first ``system`` message content from a history list, if any."""
+    if not isinstance(messages, list):
+        return None
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role", "")).lower() != "system":
+            continue
+        text = stringify_message_content(message.get("content"))
+        text = text.strip()
+        if text:
+            return text
+    return None
+
+
+def prepend_system_prompt(prompt: Any, system_prompt: str) -> Any:
+    """Prefix a Codex turn input with the agent system prompt.
+
+    Only the plain-string turn input shape (``memory_mode="codex_thread"``) is
+    augmented; richer multimodal inputs are returned untouched so we never
+    corrupt image-bearing turns.
+    """
+    if not system_prompt or not isinstance(prompt, str):
+        return prompt
+    return f"{SYSTEM_TURN_HEADER}\n{system_prompt}\n\n---\n\n{prompt}"
+
 
 def build_codex_turn_input(fallback_prompt: str, messages: Any, *, memory_mode: str) -> Any:
     """Build a Codex RunInput from Agentify memory history."""

@@ -7,13 +7,24 @@ from agentify.utils.style import Colors
 
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+# A library must not configure global logging at import time; the colored stream
+# output is opt-in and attached lazily by MemoryService(log_enabled=True).
+logger.addHandler(logging.NullHandler())
 
 _ALLOWED_FIELDS = {"role", "content", "name", "tool_call_id", "metadata", "id", "ts"}
+
+
+def _ensure_stream_logging() -> None:
+    has_stream = any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.NullHandler)
+        for h in logger.handlers
+    )
+    if not has_stream:
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        logger.addHandler(handler)
+    if logger.level == logging.NOTSET:
+        logger.setLevel(logging.INFO)
 
 
 class MemoryService:
@@ -33,6 +44,8 @@ class MemoryService:
         self.log_enabled = log_enabled
         self.max_log_length = max_log_length  # max length preview of the log
         self.redact_keys = {"password", "api_key", "token", "secret", "key", "authorization"}
+        if log_enabled:
+            _ensure_stream_logging()
 
     def _normalize_message(self, message: Dict[str, Any]) -> Message:
         """Accept OpenAI-shaped dicts; move unknown keys (e.g., 'tool_calls') into metadata.

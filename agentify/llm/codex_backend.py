@@ -15,7 +15,12 @@ from agentify.llm.codex_errors import (
     CodexStreamTimeoutError,
     raise_codex_errors,
 )
-from agentify.llm.codex_inputs import build_codex_turn_input, extract_output_schema
+from agentify.llm.codex_inputs import (
+    build_codex_turn_input,
+    extract_output_schema,
+    extract_system_prompt,
+    prepend_system_prompt,
+)
 from agentify.mcp.runtime_bridge import RuntimeMCPBridge
 
 try:
@@ -91,6 +96,9 @@ class CodexThreadBackend:
 
         # agentify_session_id → codex_thread_id (string, not the live object)
         self.thread_ids: Dict[str, str] = {}
+        # Sessions explicitly dropped (via drop_session) since load, so a
+        # merge-on-save never resurrects them from a stale on-disk entry.
+        self._dropped_sessions: set[str] = set()
         # Optional JSON file persisting the session → thread mapping across
         # process restarts (Codex threads themselves survive in ~/.codex/).
         self.thread_map_path: str | None = (
@@ -247,12 +255,46 @@ class CodexThreadBackend:
             directory = os.path.dirname(path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
+            # Merge with whatever is on disk so concurrent backends sharing the
+            # same map file (e.g. a CLI and a Telegram bridge) never clobber each
+            # other's sessions. This backend's entries win for keys it owns.
+            merged: Dict[str, str] = {}
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    existing = json.load(handle)
+                if isinstance(existing, dict):
+                    merged.update({str(k): str(v) for k, v in existing.items()})
+            except FileNotFoundError:
+                pass
+            except Exception as exc:
+                logger.warning("Could not read Codex thread map before saving %s: %s", path, exc)
+            # Drop keys this backend deliberately removed since it last loaded.
+            for key in self._dropped_sessions:
+                merged.pop(key, None)
+            merged.update(self.thread_ids)
             tmp_path = f"{path}.tmp"
             with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(self.thread_ids, handle, ensure_ascii=False, indent=2)
+                json.dump(merged, handle, ensure_ascii=False, indent=2)
             os.replace(tmp_path, path)
         except Exception as exc:
             logger.warning("Could not persist Codex thread map to %s: %s", path, exc)
+
+    def drop_session(self, session_id: str) -> str | None:
+        """Forget the Codex thread mapped to a session (e.g. on a memory reset).
+
+        Removes the mapping from memory and the persisted map file so the next
+        turn for that session starts a fresh Codex thread instead of resuming the
+        old one. Returns the dropped Codex thread ID, if there was one. The Codex
+        thread itself stays on disk under ``~/.codex/`` and is simply no longer
+        referenced.
+        """
+        self._load_thread_map()
+        thread_id = self.thread_ids.pop(session_id, None)
+        self._dropped_sessions.add(session_id)
+        self._save_thread_map()
+        if thread_id is not None:
+            logger.info("Dropped Codex thread mapping for session %s (was %s)", session_id, thread_id)
+        return thread_id
 
     def get_thread_id(self, session_id: str) -> str | None:
         """Return the Codex thread ID mapped to a session, if any."""
@@ -286,11 +328,22 @@ class CodexThreadBackend:
         **kwargs,
     ) -> Any:
         """Send *only* the latest prompt to the Codex thread for this session."""
+        # In codex_thread mode only the latest user message is sent per turn, so
+        # the agent's system prompt would never reach Codex. Seed it once, on the
+        # first turn of a brand-new thread; it then persists in the Codex thread.
+        seed_system_prompt: str | None = None
+        if self.memory_mode == "codex_thread":
+            self._load_thread_map()
+            if session_id not in self.thread_ids:
+                seed_system_prompt = extract_system_prompt(kwargs.get("messages"))
+
         prompt = build_codex_turn_input(
             prompt,
             kwargs.get("messages"),
             memory_mode=self.memory_mode,
         )
+        if seed_system_prompt:
+            prompt = prepend_system_prompt(prompt, seed_system_prompt)
         thread_config = await self._build_thread_config(
             kwargs.get("agentify_tools"),
             session_id=session_id,

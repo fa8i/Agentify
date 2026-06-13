@@ -62,14 +62,14 @@ version.
 
 ## Quick Start
 
-Here is how to create a simple agent with memory and tools:
+The fastest way to get an agent running is the `Agent` helper. Only `model` is
+required — an in-memory store and conversation address are created for you:
 
 ```python
 # Note: Agentify does not auto-load .env. Load it manually if needed.
 # from dotenv import load_dotenv; load_dotenv()
 
-from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress, tool
-from agentify.memory.stores import InMemoryStore
+from agentify import Agent, tool
 
 # 1. Define a tool
 @tool
@@ -78,50 +78,67 @@ def get_time() -> dict:
     from datetime import datetime
     return {"time": datetime.now().strftime("%H:%M:%S")}
 
-# 2. Initialize Memory
-memory = MemoryService(store=InMemoryStore())
-addr = MemoryAddress(conversation_id="session_1")
+# 2. Create the agent (provider defaults to "openai")
+agent = Agent(
+    "You are a helpful assistant.",
+    model="gpt-5.5",
+    tools=[get_time],
+)
 
-# 3. Create the Agent
+# 3. Run it (sync)
+print(agent.run("What time is it?"))
+
+# Async usage is also available:
+# print(await agent.arun("What time is it?"))
+```
+
+`Agent` is a thin subclass of `BaseAgent`; any extra keyword argument
+(`reasoning_effort`, `model_kwargs`, `temperature`, `stream`, `provider`, ...) is
+forwarded to the underlying config.
+
+### Full control with `BaseAgent`
+
+For multi-tenant routing, custom stores, or shared memory services, build the
+pieces explicitly:
+
+```python
+from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress, InMemoryStore
+
+memory = MemoryService(store=InMemoryStore())
+addr = MemoryAddress(tenant_id="acme", user_id="u1", conversation_id="session_1")
+
 agent = BaseAgent(
     config=AgentConfig(
         name="ReasoningAgent",
         system_prompt="You are a helpful assistant.",
-        provider="provider",
-        model_name="model",
-        reasoning_effort="low",  # optional param:"low", "medium", "high"
-        model_kwargs={"max_completion_tokens": 5000}, # Pass model-specific params
-        verbose=True, # Controls logging (True by default)
+        provider="openai",
+        model_name="gpt-5.5",
+        reasoning_effort="low",  # optional: "low", "medium", "high"
+        model_kwargs={"max_completion_tokens": 5000},
+        verbose=True,
     ),
     memory=memory,
     memory_address=addr,
-    tools=[get_time]
+    tools=[get_time],
 )
 
-# 4. Run it (sync)
 response = agent.run(user_input="What time is it?")
 print(response)
-
-# Async usage is also available:
-# response = await agent.arun(user_input="What time is it?")
 ```
 
 ## Native Codex Provider
 
 Codex support uses ChatGPT OAuth via the Codex CLI and keeps the normal Agentify
-API:
+API. Pass `provider="codex"` to either `Agent` or `BaseAgent`:
 
 ```python
-agent = BaseAgent(
-    config=AgentConfig(
-        name="CodexAgent",
-        system_prompt="You are a helpful assistant.",
-        provider="codex",
-        model_name="gpt-5.4",
-        stream=True,
-    ),
-    memory=memory,
-    memory_address=addr,
+from agentify import Agent
+
+agent = Agent(
+    "You are a helpful assistant.",
+    provider="codex",
+    model="gpt-5.5",
+    stream=True,
     tools=[get_time],
 )
 ```

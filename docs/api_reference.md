@@ -4,6 +4,57 @@ Complete reference for Agentify classes and methods.
 
 ## Core
 
+### Agent
+
+Convenience subclass of `BaseAgent` with batteries-included defaults. Ideal for
+getting started and for single-conversation apps.
+
+```python
+class Agent(BaseAgent):
+    def __init__(
+        self,
+        system_prompt: str = "You are a helpful assistant.",
+        *,
+        model: str,
+        provider: str = "openai",
+        name: str = "agent",
+        tools: Optional[List[Tool]] = None,
+        memory: Optional[MemoryService] = None,
+        memory_address: Optional[MemoryAddress] = None,
+        conversation_id: Optional[str] = None,
+        temperature: float = 1.0,
+        stream: bool = False,
+        verbose: bool = False,
+        image_config: Optional[ImageConfig] = None,
+        pre_hooks: Optional[List[Callable]] = None,
+        post_hooks: Optional[List[Callable]] = None,
+        tool_pre_hooks: Optional[List[Callable]] = None,
+        tool_post_hooks: Optional[List[Callable]] = None,
+        client_factory: Optional[LLMClientFactory] = None,
+        **config_kwargs,  # forwarded to AgentConfig
+    )
+```
+
+**Behavior:**
+- Only `model` is required.
+- When `memory` is omitted, an `InMemoryStore` + `MemoryService` are created
+  (memory logging follows `verbose`).
+- When `memory_address` is omitted, a default address is built from
+  `conversation_id` (default `"default"`) and `name`.
+- Any extra keyword argument is forwarded to `AgentConfig`, so advanced knobs
+  (`reasoning_effort`, `model_kwargs`, `max_tool_iter`, `timeout`, ...) keep
+  working.
+
+```python
+from agentify import Agent
+
+agent = Agent("You are a helpful assistant.", model="gpt-5.5")
+print(agent.run("Hello!"))
+```
+
+Use `BaseAgent` directly when you need a shared memory service, a custom store,
+or multi-tenant `MemoryAddress` routing.
+
 ### BaseAgent
 
 Main agent class.
@@ -97,7 +148,7 @@ class AgentConfig:
     stream: bool = False
     max_retries: int = 3
     verbose: bool = True
-    max_tool_iter: Optional[int] = 10
+    max_tool_iter: Optional[int] = 25
     delegation_recovery_enabled: bool = True
     delegation_recovery_mode: str = "retry_isolated"
     delegation_max_retries: int = 1

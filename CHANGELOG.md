@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.2] - 2026-06-13
+
+### Added
+- **`Agent` Convenience Class**: New `from agentify import Agent` one-liner with batteries-included defaults. Only `model` is required; an in-process store and a default conversation address are created automatically when `memory`/`memory_address` are omitted, and extra keyword arguments are forwarded to `AgentConfig`. The explicit `BaseAgent`/`AgentConfig`/`MemoryService` API is unchanged.
+- **Top-Level Exports**: `Agent` and `InMemoryStore` are now exported from `agentify`, so the common case no longer needs deep imports.
+- **Richer Tool Schemas**: The `@tool` decorator now emits `items` for typed lists (`list[str]`), and `enum` for `Literal[...]` and `Enum` parameters, improving tool-calling accuracy.
+
+### Fixed
+- **Concurrent Streaming Isolation**: Streaming tool-call/reasoning state is no longer stored on the agent instance (`_last_stream_*`); it flows through a per-call sink, so concurrent streaming `arun()` calls on a shared agent instance no longer clobber each other. The legacy `self._last_stream_*` attributes remain populated for direct callers.
+
+### Changed
+- **Logging Is No Longer Configured at Import Time**: `agentify.memory.service` attaches a `NullHandler` on import; the human-readable colored stream output is wired up lazily only when a `MemoryService` is created with `log_enabled=True`, so importing Agentify no longer hijacks the host application's logging configuration.
+
+## [0.6.1] - 2026-06-13
+
+### Added
+- **System Prompt Seeding for Codex Thread Memory**: In `memory_mode="codex_thread"`, the agent's system prompt is now sent once on the first turn of each new Codex thread (`prepend_system_prompt` / `extract_system_prompt` in `codex_inputs.py`), so the agent identity reaches Codex even though only the latest user message is sent per turn. Subsequent turns on the persistent thread do not re-send it.
+- **`CodexThreadBackend.drop_session(session_id)`**: Forget the Codex thread mapped to a session (and remove it from the persisted `thread_map_path`), so a memory reset starts a fresh thread instead of resuming the old one. The Codex thread itself remains on disk under `~/.codex/`.
+
+### Fixed
+- **Concurrent Thread-Map Saves No Longer Clobber**: `_save_thread_map` now merges with the on-disk map before writing, so two backends sharing one `thread_map_path` (e.g. a CLI and a Telegram bridge) don't overwrite each other's session → thread mappings.
+
 ## [0.6.0] - 2026-06-13
 
 ### Added

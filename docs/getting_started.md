@@ -34,11 +34,36 @@ OPENAI_API_KEY=your-key-here
 
 ## Your First Agent
 
+The quickest path is the `Agent` helper. Only `model` is required; the store and
+conversation address are created for you, and `provider` defaults to `"openai"`:
+
 ```python
-import os
 from dotenv import load_dotenv
-from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress
-from agentify.memory.stores import InMemoryStore
+from agentify import Agent
+
+load_dotenv()
+
+agent = Agent(
+    "You are a helpful assistant.",
+    model="gpt-5.5",
+    temperature=0.7,
+)
+
+# Chat (sync)
+print(agent.run("Hello! Who are you?"))
+
+# Async alternative:
+# print(await agent.arun("Hello! Who are you?"))
+```
+
+### Full control with `BaseAgent`
+
+When you need a custom store, a shared `MemoryService`, or multi-tenant memory
+addressing, build the components explicitly:
+
+```python
+from dotenv import load_dotenv
+from agentify import BaseAgent, AgentConfig, MemoryService, MemoryAddress, InMemoryStore
 
 load_dotenv()
 
@@ -51,20 +76,16 @@ agent = BaseAgent(
     config=AgentConfig(
         name="MyFirstAgent",
         system_prompt="You are a helpful assistant.",
-        provider="provider",
-        model_name="model_name",
+        provider="openai",
+        model_name="gpt-5.5",
         temperature=0.7,
     ),
     memory=memory,
-    memory_address=addr
+    memory_address=addr,
 )
 
 # 3. Chat (sync)
-response = agent.run("Hello! Who are you?")
-print(response)
-
-# Async alternative:
-# response = await agent.arun("Hello! Who are you?")
+print(agent.run("Hello! Who are you?"))
 ```
 
 ## Streaming Responses
@@ -72,16 +93,10 @@ print(response)
 Enable streaming for real-time output:
 
 ```python
-agent = BaseAgent(
-    config=AgentConfig(
-        name="StreamAgent",
-        system_prompt="You are a helpful assistant.",
-        provider="provider",
-        model_name="model_name",
-        stream=True,  # Enable streaming
-    ),
-    memory=memory,
-    memory_address=addr
+agent = Agent(
+    "You are a helpful assistant.",
+    model="gpt-5.5",
+    stream=True,  # Enable streaming
 )
 
 # Get a sync generator
@@ -104,11 +119,10 @@ Tools give your agent capabilities:
 ```python
 from agentify.extensions.tools import TimeTool, CalculatorTool
 
-agent = BaseAgent(
-    config=AgentConfig(...),
-    memory=memory,
-    memory_address=addr,
-    tools=[TimeTool(), CalculatorTool()]  # Add tools here
+agent = Agent(
+    "You are a helpful assistant.",
+    model="gpt-5.5",
+    tools=[TimeTool(), CalculatorTool()],  # Add tools here
 )
 
 response = agent.run("What time is it? Also calculate 15 * 23")

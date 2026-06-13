@@ -1,6 +1,9 @@
+import enum
 import json
 import inspect
-from typing import Dict, Any, Callable, Optional, get_type_hints, get_origin, get_args, Union
+from typing import Dict, Any, Callable, List, Optional, get_type_hints, get_origin, get_args, Union
+
+from typing import Literal
 from dataclasses import dataclass
 
 
@@ -115,34 +118,67 @@ def tool(
         return create_tool(_func)
 
 
-def _type_to_json_schema(python_type: Any) -> Dict[str, Any]:
-    """Convert Python type hint to JSON Schema type."""
-    # Handle Optional[X] (which is Union[X, None])
-    origin = get_origin(python_type)
-    if origin is Union:
-        args = get_args(python_type)
-        # Filter out NoneType
-        non_none_types = [arg for arg in args if arg is not type(None)]
-        if len(non_none_types) == 1:
-            python_type = non_none_types[0]
-            origin = get_origin(python_type)
+def _enum_schema(values: List[Any]) -> Dict[str, Any]:
+    schema: Dict[str, Any] = {"enum": values}
+    json_type = _json_type_for_values(values)
+    if json_type:
+        schema["type"] = json_type
+    return schema
 
-    # Map Python types to JSON Schema types
+
+def _type_to_json_schema(python_type: Any) -> Dict[str, Any]:
+    """Convert a Python type hint to a JSON Schema fragment.
+
+    Supports ``Optional[X]`` (nullable), ``Literal[...]`` / ``Enum`` (enum) and
+    typed lists such as ``list[str]`` (with ``items``).
+    """
+    origin = get_origin(python_type)
+
+    if origin is Literal:
+        return _enum_schema(list(get_args(python_type)))
+
+    if isinstance(python_type, type) and issubclass(python_type, enum.Enum):
+        return _enum_schema([member.value for member in python_type])
+
+    if origin is Union:
+        non_none = [arg for arg in get_args(python_type) if arg is not type(None)]
+        if len(non_none) == 1:
+            return _type_to_json_schema(non_none[0])
+
+    # bool must be checked before int, since bool is a subclass of int.
     if python_type is str or python_type == "str":
         return {"type": "string"}
+    elif python_type is bool or python_type == "bool":
+        return {"type": "boolean"}
     elif python_type is int or python_type == "int":
         return {"type": "integer"}
     elif python_type is float or python_type == "float":
         return {"type": "number"}
-    elif python_type is bool or python_type == "bool":
-        return {"type": "boolean"}
-    elif origin is list:
-        return {"type": "array"}
+    elif origin is list or python_type is list:
+        schema = {"type": "array"}
+        args = get_args(python_type)
+        if args and args[0] is not Any:
+            schema["items"] = _type_to_json_schema(args[0])
+        return schema
     elif origin is dict or python_type is dict:
         return {"type": "object"}
     else:
-        # Default to string for unknown types
         return {"type": "string"}
+
+
+def _json_type_for_values(values: List[Any]) -> Optional[str]:
+    py_types = {type(v) for v in values}
+    if not py_types:
+        return None
+    if py_types == {bool}:
+        return "boolean"
+    if py_types <= {int}:
+        return "integer"
+    if py_types <= {int, float}:
+        return "number"
+    if py_types <= {str}:
+        return "string"
+    return None
 
 
 def _extract_param_description(func: Callable[..., Any], param_name: str) -> Optional[str]:

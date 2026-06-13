@@ -121,29 +121,46 @@ def my_tool(param1: str, param2: int = 10) -> dict:
 | `int` | `"integer"` |
 | `float` | `"number"` |
 | `bool` | `"boolean"` |
-| `List` | `"array"` |
-| `Dict` | `"object"` |
-| `Optional[T]` | Automatically inferred |
+| `list[T]` | `"array"` with `items` inferred from `T` |
+| `dict` | `"object"` |
+| `Optional[T]` | Inner type of `T` |
+| `Literal[...]` | `enum` of the allowed values |
+| `Enum` subclass | `enum` of the member values |
+
+Typed lists and enums produce richer schemas, which improves tool-calling
+accuracy:
+
+```python
+from typing import Literal
+
+@tool
+def set_status(tags: list[str], level: Literal["low", "medium", "high"]) -> dict:
+    """Updates the status.
+
+    Args:
+        tags: Labels to attach.
+        level: Priority level.
+    """
+    return {"tags": tags, "level": level}
+```
+
+`tags` becomes `{"type": "array", "items": {"type": "string"}}` and `level`
+becomes `{"enum": ["low", "medium", "high"], "type": "string"}`.
 
 ## Using with Agents
 
 ```python
-from agentify import BaseAgent, AgentConfig, tool
+from agentify import Agent, tool
 
 @tool
 def search(query: str) -> dict:
     """Searches for information."""
     return {"results": [f"Result for: {query}"]}
 
-agent = BaseAgent(
-    config=AgentConfig(
-        name="MyAgent",
-        system_prompt="You are a helpful assistant.",
-        provider="provider",
-        model_name="model"
-    ),
-    memory=memory,
-    tools=[search]  # ← Use directly, no instantiation needed
+agent = Agent(
+    "You are a helpful assistant.",
+    model="gpt-5.5",
+    tools=[search],  # ← Use directly, no instantiation needed
 )
 ```
 
