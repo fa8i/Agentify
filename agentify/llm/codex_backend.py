@@ -2,11 +2,18 @@ import logging
 import asyncio
 import os
 import shutil
+import time
 from collections.abc import Sequence
 from typing import Any, Dict
 
 from agentify.core.tool import Tool
-from agentify.llm.codex_errors import raise_codex_errors
+from agentify.llm.codex_errors import (
+    CodexBackendError,
+    CodexCLINotFoundError,
+    CodexEmptyTurnError,
+    CodexStreamTimeoutError,
+    raise_codex_errors,
+)
 from agentify.llm.codex_inputs import build_codex_turn_input, extract_output_schema
 from agentify.mcp.runtime_bridge import RuntimeMCPBridge
 
@@ -36,10 +43,25 @@ class DummyResponse:
 class CodexThreadBackend:
     """Native Codex Thread Backend.
 
-    By default, Agentify memory is the source of truth: every turn starts a
-    fresh Codex thread and sends the Agentify-managed history in the prompt.
-    Set ``memory_mode="codex_thread"`` to reuse Codex thread IDs per Agentify
-    session instead.
+    Memory modes:
+
+    - ``memory_mode="agentify"`` (default): Agentify memory is the source of
+      truth. Every turn starts a fresh **ephemeral** Codex thread and resends
+      the full Agentify-managed history in the prompt. This keeps Agentify
+      memory portable across providers, but each turn pays for reprocessing
+      the whole history and — when Agentify tools are attached — for a fresh
+      MCP server startup, so latency grows with conversation length. Best for
+      batch/one-shot usage or when Agentify memory must stay authoritative.
+    - ``memory_mode="codex_thread"``: one persistent Codex thread per Agentify
+      session (``thread_ids`` maps session → thread ID). Only the latest user
+      message is sent per turn and the MCP server stays warm across turns.
+      Recommended for interactive, multi-turn assistants. Agentify memory is
+      still written (tool calls and responses are recorded) but Codex thread
+      state is what the model actually sees.
+
+    Concurrency note: the runtime MCP bridge holds one tool executor at a
+    time, so do not run concurrent turns for *different* sessions on the same
+    backend instance when tools are attached.
     """
     is_native_thread_backend = True
     supports_tools = False
@@ -100,6 +122,32 @@ class CodexThreadBackend:
         thread_config: dict[str, Any] | None = None,
     ):
         """Return a live AsyncThread, creating or resuming as needed."""
+        started_at = time.monotonic()
+        try:
+            thread = await self._acquire_thread(
+                session_id, model, thread_config=thread_config
+            )
+        except FileNotFoundError as exc:
+            raise CodexCLINotFoundError(
+                "Codex CLI binary was not found or could not be started. "
+                "Install it (e.g. `npm install -g @openai/codex`) or set "
+                f"client_config_override={{'codex_bin': ...}}. Original error: {exc}"
+            ) from exc
+        logger.debug(
+            "Codex thread ready in %.2fs (memory_mode=%s, tools=%s)",
+            time.monotonic() - started_at,
+            self.memory_mode,
+            bool(thread_config),
+        )
+        return thread
+
+    async def _acquire_thread(
+        self,
+        session_id: str,
+        model: str,
+        *,
+        thread_config: dict[str, Any] | None = None,
+    ):
         if self.memory_mode == "agentify":
             logger.debug("Starting ephemeral Codex thread for Agentify-managed memory")
             try:
@@ -108,7 +156,19 @@ class CodexThreadBackend:
                     ephemeral=True,
                     config=thread_config,
                 )
-            except TypeError:
+            except TypeError as exc:
+                if thread_config is not None:
+                    raise CodexBackendError(
+                        "The installed openai-codex SDK does not accept "
+                        "'ephemeral'/'config' thread parameters, which are required "
+                        "to expose Agentify tools through MCP. Upgrade with "
+                        "`pip install -U openai-codex`."
+                    ) from exc
+                logger.warning(
+                    "openai-codex SDK rejected ephemeral thread parameters (%s); "
+                    "falling back to a persistent thread.",
+                    exc,
+                )
                 return await self.codex.thread_start(model=model)
 
         thread_id = self.thread_ids.get(session_id)
@@ -236,6 +296,7 @@ class CodexThreadBackend:
         from agentify.llm.codex_events import CodexEventCollector
 
         collector = CodexEventCollector()
+        started_at = time.monotonic()
         turn = await self._start_turn(thread, prompt, output_schema=output_schema)
         stream = turn.stream()
         try:
@@ -247,15 +308,48 @@ class CodexThreadBackend:
             await stream.aclose()
 
         result = collector.result()
+        logger.debug(
+            "Codex turn finished in %.2fs (events=%d, mcp_tool_calls=%d, "
+            "transient_errors=%d)",
+            time.monotonic() - started_at,
+            result.event_count,
+            len(result.mcp_tool_calls),
+            len(result.warnings),
+        )
         if result.errors:
             raise_codex_errors(result.errors)
         if not result.final_text:
-            raise RuntimeError(
-                "Codex turn completed without reconstructible text. "
-                "No agent message delta, agent message item, or MCP tool result was exposed "
-                "by the event stream."
+            raise CodexEmptyTurnError(self._empty_turn_message(result))
+        if result.warnings:
+            logger.info(
+                "Codex turn recovered after transient errors: %s",
+                "; ".join(result.warnings),
             )
         return result.final_text
+
+    def _empty_turn_message(self, result: Any) -> str:
+        """Build an actionable error for a turn that produced no text."""
+        parts = [
+            "Codex turn completed without reconstructible text. "
+            "No agent message delta, agent message item, or MCP tool result was exposed "
+            f"by the event stream ({result.event_count} events received)."
+        ]
+        if result.warnings:
+            parts.append(f"Transient errors during the turn: {'; '.join(result.warnings)}")
+        bridge = self._runtime_mcp_bridge
+        if bridge is not None:
+            if bridge.connection_count == 0:
+                parts.append(
+                    "The Agentify runtime MCP server never connected: Codex likely "
+                    "failed to start it (check the `codex` CLI version, MCP support, "
+                    "and that the Python interpreter can import agentify)."
+                )
+            else:
+                parts.append(
+                    f"Runtime MCP bridge served {bridge.connection_count} request(s), "
+                    "so the MCP path was working."
+                )
+        return " ".join(parts)
 
     async def _stream_thread_turn_events(
         self,
@@ -288,6 +382,11 @@ class CodexThreadBackend:
         result = collector.result()
         if result.errors:
             raise_codex_errors(result.errors)
+        if result.warnings:
+            logger.info(
+                "Codex turn recovered after transient errors: %s",
+                "; ".join(result.warnings),
+            )
 
     async def _start_turn(
         self,
@@ -311,8 +410,10 @@ class CodexThreadBackend:
             except StopAsyncIteration:
                 break
             except asyncio.TimeoutError as exc:
-                raise TimeoutError(
-                    f"Timed out waiting for Codex turn events after {self.timeout} seconds."
+                raise CodexStreamTimeoutError(
+                    f"Timed out waiting for Codex turn events after {self.timeout} seconds "
+                    "(no event arrived within the per-event timeout; the Codex CLI may be "
+                    "stalled or a tool may be blocking without progress events)."
                 ) from exc
 
     def _event_agent_message_delta(self, event: Any) -> str | None:

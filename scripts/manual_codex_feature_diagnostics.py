@@ -309,7 +309,7 @@ def dump_sqlite(db_path: Path) -> None:
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Run manual Codex feature diagnostics.")
     parser.add_argument("--case", choices=["all", "structured", "image", "streaming", "tool-limit"], default="all")
-    parser.add_argument("--model", default="gpt-5.3-codex")
+    parser.add_argument("--model", default="gpt-5.4")
     parser.add_argument("--image", default="IMAGEN.png")
     parser.add_argument("--db", default="/tmp/opencode/agentify_codex_feature_diagnostics.db")
     parser.add_argument("--keep-db", action="store_true")

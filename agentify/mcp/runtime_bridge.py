@@ -32,6 +32,16 @@ class RuntimeMCPBridge:
         self._port: int | None = None
         self._agentify_server = AgentifyMCPServer([])
         self._tool_names: list[str] = []
+        self._connection_count = 0
+
+    @property
+    def connection_count(self) -> int:
+        """Number of requests served to the MCP proxy subprocess.
+
+        Zero after a turn means Codex never started (or never reached) the
+        Agentify runtime MCP server.
+        """
+        return self._connection_count
 
     @property
     def is_running(self) -> bool:
@@ -87,17 +97,31 @@ class RuntimeMCPBridge:
                         str(self._port),
                         "--token",
                         self._token,
+                        "--call-timeout",
+                        str(self.call_timeout()),
                     ],
                     "enabled_tools": self._tool_names,
                 }
             }
         }
 
+    def call_timeout(self) -> float:
+        """Socket read timeout for proxied tool calls.
+
+        Must exceed ``tool_timeout`` so the bridge's own timeout response
+        (a structured MCP error) reaches the proxy instead of the socket
+        read aborting first.
+        """
+        if self.tool_timeout is not None and self.tool_timeout > 0:
+            return float(self.tool_timeout) + 30.0
+        return 600.0
+
     async def _handle_client(
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
+        self._connection_count += 1
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=10)
             request = json.loads(line.decode("utf-8"))

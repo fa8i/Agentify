@@ -7,7 +7,14 @@ from agentify.llm.codex_backend import (
     CodexThreadBackend,
     DummyResponse,
 )
-from agentify.llm.codex_errors import NonRetryableCodexError, raise_codex_errors
+from agentify.llm.codex_errors import (
+    CodexBackendError,
+    CodexCLINotFoundError,
+    CodexStreamTimeoutError,
+    CodexUsageLimitError,
+    NonRetryableCodexError,
+    raise_codex_errors,
+)
 from agentify.llm.codex_inputs import build_codex_turn_input, extract_output_schema
 from agentify.llm.tool_adapters import CodexMCPToolAdapter
 import agentify.llm.codex_backend as codex_module
@@ -544,9 +551,152 @@ def test_codex_backend_errors_when_turn_completes_without_text(mock_codex):
         asyncio.run(backend.run_native(session_id="s", model="m", prompt="p"))
 
 
+def _event_stream_thread(events):
+    """Build a fake Thread whose turn streams the given mock events."""
+
+    class Stream:
+        def __init__(self):
+            self._events = iter(events)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._events)
+            except StopIteration:
+                raise StopAsyncIteration
+
+        async def aclose(self):
+            pass
+
+    class Turn:
+        def stream(self):
+            return Stream()
+
+    class Thread:
+        async def turn(self, prompt, **kwargs):
+            return Turn()
+
+    return Thread()
+
+
+def _delta_event(text):
+    return MagicMock(method="item/agentMessage/delta", payload=MagicMock(delta=text))
+
+
+def _completed_event():
+    return MagicMock(method="turn/completed", payload=MagicMock(turn=MagicMock(error=None)))
+
+
+def test_codex_backend_transient_error_does_not_fail_completed_turn(mock_codex):
+    """Errors Codex retries internally (willRetry=True) must not abort the turn."""
+    transient = MagicMock(
+        method="error",
+        payload=MagicMock(
+            error=MagicMock(message="stream disconnected", codex_error_info=None),
+            will_retry=True,
+        ),
+    )
+    backend = CodexThreadBackend(config={}, timeout=30)
+    backend._get_or_create_thread = AsyncMock(
+        return_value=_event_stream_thread([transient, _delta_event("hola"), _completed_event()])
+    )
+
+    response = asyncio.run(backend.run_native(session_id="s", model="m", prompt="p"))
+
+    assert response.choices[0].message.content == "hola"
+
+
+def test_codex_backend_fatal_error_event_raises_classified_error(mock_codex):
+    fatal = MagicMock(
+        method="error",
+        payload=MagicMock(
+            error=MagicMock(
+                message="You've hit your usage limit.",
+                codex_error_info="usageLimitExceeded",
+            ),
+            will_retry=False,
+        ),
+    )
+    backend = CodexThreadBackend(config={}, timeout=30)
+    backend._get_or_create_thread = AsyncMock(
+        return_value=_event_stream_thread([fatal, _completed_event()])
+    )
+
+    with pytest.raises(CodexUsageLimitError):
+        asyncio.run(backend.run_native(session_id="s", model="m", prompt="p"))
+
+
+def test_codex_backend_thread_start_typeerror_with_tools_is_actionable(mock_codex):
+    tool = Tool(schema={"name": "example", "parameters": {"type": "object"}}, func=lambda: "ok")
+    backend = CodexThreadBackend(config={}, timeout=30)
+
+    async def legacy_thread_start(model):
+        raise AssertionError("must not be reached: config would be dropped")
+
+    backend.codex.thread_start = legacy_thread_start
+
+    try:
+        with pytest.raises(CodexBackendError, match="Upgrade"):
+            asyncio.run(
+                backend.run_native(
+                    session_id="s",
+                    model="m",
+                    prompt="p",
+                    agentify_tools=[tool],
+                )
+            )
+    finally:
+        if backend._runtime_mcp_bridge is not None:
+            asyncio.run(backend._runtime_mcp_bridge.close())
+
+
+def test_codex_backend_missing_cli_raises_actionable_error(mock_codex):
+    backend = CodexThreadBackend(config={}, timeout=30)
+
+    async def thread_start(**kwargs):
+        raise FileNotFoundError("codex binary not found")
+
+    backend.codex.thread_start = thread_start
+
+    with pytest.raises(CodexCLINotFoundError, match="npm install -g @openai/codex"):
+        asyncio.run(backend.run_native(session_id="s", model="m", prompt="p"))
+
+
+def test_codex_backend_empty_turn_with_unused_bridge_mentions_mcp_startup(mock_codex):
+    tool = Tool(schema={"name": "example", "parameters": {"type": "object"}}, func=lambda: "ok")
+    backend = CodexThreadBackend(config={}, timeout=30)
+    backend._get_or_create_thread = AsyncMock(
+        return_value=_event_stream_thread([_completed_event()])
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="never connected"):
+            asyncio.run(
+                backend.run_native(
+                    session_id="s",
+                    model="m",
+                    prompt="p",
+                    agentify_tools=[tool],
+                )
+            )
+    finally:
+        if backend._runtime_mcp_bridge is not None:
+            asyncio.run(backend._runtime_mcp_bridge.close())
+
+
 def test_codex_backend_marks_usage_limit_non_retryable(mock_codex):
     with pytest.raises(NonRetryableCodexError, match="usage limit exceeded"):
         raise_codex_errors(["Codex usage limit exceeded: try later"])
+
+
+def test_raise_codex_errors_classifies_specific_types(mock_codex):
+    with pytest.raises(CodexUsageLimitError):
+        raise_codex_errors(["Codex usage limit exceeded: try later"])
+    assert CodexUsageLimitError("x").non_retryable_provider_error is True
+    assert CodexStreamTimeoutError("x").non_retryable_provider_error is False
+    assert isinstance(CodexStreamTimeoutError("x"), TimeoutError)
 
 
 def test_codex_backend_timeout_waiting_for_events(mock_codex):

@@ -606,7 +606,10 @@ class BaseAgent(Runnable):
                         prompt = " ".join([c.get("text", "") for c in last_content if c.get("type") == "text"])
                     else:
                         prompt = last_content
-                    session_id_str = getattr(addr, "session_id", str(addr))
+                    # Stable per-conversation key so native backends (Codex)
+                    # can map sessions to provider threads deterministically.
+                    key_str = getattr(addr, "key_str", None)
+                    session_id_str = key_str() if callable(key_str) else str(addr)
                     
                     if self.config.stream:
                         return await async_client.run_native(

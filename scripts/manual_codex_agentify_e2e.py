@@ -57,7 +57,7 @@ async def _run_agent(model: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run BaseAgent(provider='codex') MCP E2E.")
-    parser.add_argument("--model", default="gpt-5.3-codex")
+    parser.add_argument("--model", default="gpt-5.4")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--debug-log", default="/tmp/agentify-codex-agentify-e2e.log")
     parser.add_argument("--keep-config", action="store_true")

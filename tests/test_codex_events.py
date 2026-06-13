@@ -79,6 +79,63 @@ def test_item_completed_unknown_notification_dict_mcp_result_is_captured():
     assert parsed.mcp_tool_results == ["ECHO_FROM_AGENTIFY: hola-agentify"]
 
 
+def test_error_event_with_will_retry_is_warning_not_error():
+    collector = CodexEventCollector()
+    payload = SimpleNamespace(
+        error=SimpleNamespace(message="stream disconnected", codex_error_info=None),
+        will_retry=True,
+    )
+
+    collector.ingest(_event("error", payload))
+
+    result = collector.result()
+    assert result.errors == []
+    assert result.warnings == ["stream disconnected"]
+
+
+def test_error_event_without_will_retry_is_fatal_and_normalized():
+    collector = CodexEventCollector()
+    payload = SimpleNamespace(
+        error=SimpleNamespace(
+            message="You've hit your usage limit.",
+            codex_error_info="usageLimitExceeded",
+        ),
+        will_retry=False,
+    )
+
+    collector.ingest(_event("error", payload))
+
+    result = collector.result()
+    assert result.warnings == []
+    assert result.errors[0].startswith("Codex usage limit exceeded")
+
+
+def test_unauthorized_error_is_normalized_to_auth_message():
+    error = SimpleNamespace(message="HTTP 401", codex_error_info="unauthorized")
+
+    normalized = normalize_codex_error(error)
+
+    assert "Codex auth is not available" in normalized
+    assert "codex login" in normalized
+
+
+def test_root_model_error_info_is_unwrapped():
+    class FakeEnum:
+        value = "usageLimitExceeded"
+
+    error = SimpleNamespace(
+        message="limit", codex_error_info=SimpleNamespace(root=FakeEnum())
+    )
+
+    assert normalize_codex_error(error).startswith("Codex usage limit exceeded")
+
+
+def test_context_window_error_is_normalized():
+    error = SimpleNamespace(message="too long", codex_error_info="contextWindowExceeded")
+
+    assert normalize_codex_error(error).startswith("Codex context window exceeded")
+
+
 def test_turn_completed_error_is_captured():
     collector = CodexEventCollector()
 

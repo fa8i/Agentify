@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any
 
 from agentify.llm.codex_backend import CodexThreadBackend
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -24,6 +27,7 @@ class CodexEventResult:
     mcp_tool_results: list[str] = field(default_factory=list)
     mcp_server_statuses: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     event_count: int = 0
 
 
@@ -36,6 +40,7 @@ class CodexEventCollector:
         self.mcp_tool_results: list[str] = []
         self.mcp_server_statuses: list[dict[str, Any]] = []
         self.errors: list[str] = []
+        self.warnings: list[str] = []
         self.turn_completed = False
         self.event_count = 0
 
@@ -68,8 +73,21 @@ class CodexEventCollector:
             return
 
         if method == "error":
-            message = getattr(payload, "message", None) or str(payload)
-            self.errors.append(str(message))
+            # Real payload is ErrorNotification: {error: TurnError, willRetry: bool}.
+            error_obj = _payload_value(payload, "error")
+            message = normalize_codex_error(error_obj) if error_obj is not None else None
+            if not message:
+                message = str(_value(payload, "message") or payload)
+            will_retry = _payload_value(payload, "will_retry")
+            if will_retry is None:
+                will_retry = _payload_value(payload, "willRetry")
+            will_retry = bool(will_retry)
+            if will_retry:
+                # Codex retries this internally; the turn can still succeed.
+                logger.debug("Transient Codex turn error (will retry): %s", message)
+                self.warnings.append(message)
+            else:
+                self.errors.append(message)
 
     def result(self) -> CodexEventResult:
         final_text = "".join(self.agent_message_parts)
@@ -82,6 +100,7 @@ class CodexEventCollector:
             mcp_tool_results=self.mcp_tool_results,
             mcp_server_statuses=self.mcp_server_statuses,
             errors=self.errors,
+            warnings=self.warnings,
             event_count=self.event_count,
         )
 
@@ -162,19 +181,30 @@ def normalize_codex_error(error: Any) -> str | None:
     if error is None:
         return None
 
-    message = _value(error, "message") or str(error)
-    info = _value(error, "codex_error_info")
+    message = str(_value(error, "message") or str(error))
+    info = _value(error, "codex_error_info") or _value(error, "codexErrorInfo")
+    # CodexErrorInfo is a pydantic RootModel wrapping an enum or detail object.
+    info = getattr(info, "root", info)
+    info = getattr(info, "value", info)
     info_text = str(info or "")
+    lowered = message.lower()
 
-    if "usageLimitExceeded" in info_text or "usage limit" in message.lower():
+    if "usageLimitExceeded" in info_text or "usage limit" in lowered:
         return f"Codex usage limit exceeded: {message}"
-    if "not supported" in message.lower() and "model" in message.lower():
+    if "unauthorized" in info_text or "unauthorized" in lowered or "not logged in" in lowered:
+        return (
+            "Codex auth is not available (ChatGPT OAuth session missing or expired). "
+            f"Run `codex login` and retry: {message}"
+        )
+    if "contextWindowExceeded" in info_text:
+        return f"Codex context window exceeded; reduce history or start a new session: {message}"
+    if "not supported" in lowered and "model" in lowered:
         return f"Codex model is not supported for this account or CLI version: {message}"
-    if "mcp" in message.lower() and any(word in message.lower() for word in ("start", "spawn", "initialize")):
+    if "mcp" in lowered and any(word in lowered for word in ("start", "spawn", "initialize")):
         return f"Codex MCP server failed to start: {message}"
-    if "tool" in message.lower() and any(word in message.lower() for word in ("not found", "unknown")):
+    if "tool" in lowered and any(word in lowered for word in ("not found", "unknown")):
         return f"Codex MCP tool was not found: {message}"
-    return str(message)
+    return message
 
 
 def append_event_jsonl(path: Path, event: Any) -> None:

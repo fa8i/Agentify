@@ -116,6 +116,50 @@ def test_runtime_mcp_bridge_returns_tool_timeout_error():
     assert "timed out" in response["content"][0]["text"]
 
 
+def test_runtime_mcp_bridge_call_timeout_outlasts_tool_timeout():
+    bridge = RuntimeMCPBridge(tool_timeout=300)
+    assert bridge.call_timeout() == 330.0
+
+    bridge_no_timeout = RuntimeMCPBridge()
+    assert bridge_no_timeout.call_timeout() == 600.0
+
+    async def run_test():
+        await bridge.start()
+        try:
+            config = bridge.codex_config()
+            server = config["mcp_servers"]["agentify-runtime-tools"]
+            args = server["args"]
+            return args[args.index("--call-timeout") + 1]
+        finally:
+            await bridge.close()
+
+    assert asyncio.run(run_test()) == "330.0"
+
+
+def test_runtime_mcp_bridge_tracks_connections():
+    tool = Tool(
+        schema={"name": "echo_tool", "parameters": {"type": "object"}},
+        func=lambda: "ok",
+    )
+
+    async def run_test():
+        bridge = RuntimeMCPBridge()
+        bridge.update_tools([tool])
+        await bridge.start()
+        try:
+            assert bridge.connection_count == 0
+            config = bridge.codex_config()
+            server = config["mcp_servers"]["agentify-runtime-tools"]
+            port = int(server["args"][server["args"].index("--port") + 1])
+            token = server["args"][server["args"].index("--token") + 1]
+            await _send_request("127.0.0.1", port, token, {"action": "list_tools"})
+            return bridge.connection_count
+        finally:
+            await bridge.close()
+
+    assert asyncio.run(run_test()) == 1
+
+
 def test_runtime_mcp_bridge_uses_custom_tool_executor():
     calls = []
     tool = Tool(

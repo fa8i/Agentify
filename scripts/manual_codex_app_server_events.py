@@ -47,7 +47,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Capture raw Codex turn events for MCP diagnostics.")
-    parser.add_argument("--model", default="gpt-5.3-codex")
+    parser.add_argument("--model", default="gpt-5.4")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--events-log", default="/tmp/agentify-codex-events.jsonl")
     parser.add_argument("--debug-log", default="/tmp/agentify-codex-mcp-events.log")

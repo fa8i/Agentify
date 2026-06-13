@@ -517,6 +517,22 @@ client_config_override={"memory_mode": "agentify"}
 
 In `memory_mode="agentify"`, Codex threads are not reused as memory. In
 `memory_mode="codex_thread"`, Codex thread IDs are reused per Agentify session.
+
+Choosing a memory mode:
+
+- `memory_mode="agentify"` (default) keeps Agentify memory authoritative and
+  portable across providers, but every turn starts a fresh ephemeral Codex
+  thread and resends the full conversation history. Per-turn latency grows with
+  conversation length, and when Agentify tools are attached the MCP server is
+  restarted on every turn. Use it for one-shot/batch calls or when memory must
+  be readable and editable through the Agentify store.
+- `memory_mode="codex_thread"` is the recommended mode for interactive,
+  multi-turn assistants. One persistent Codex thread per Agentify session means
+  only the latest message is sent per turn and the MCP server stays warm, so
+  latency stays flat. Agentify memory still records the conversation and tool
+  calls, but Codex thread state is what the model sees, so out-of-band edits to
+  Agentify memory will not reach the model.
+
 Call `agent.close()` or `await agent.aclose()` in long-running applications to
 release provider resources such as the runtime MCP bridge.
 

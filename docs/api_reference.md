@@ -268,7 +268,9 @@ Codex-specific `client_config_override` keys:
   store and sends the current history returned by `MemoryService` to a fresh
   Codex thread each turn. Stores such as SQLite, in-memory, and Elastic remain
   the memory source of truth. Set `"codex_thread"` to reuse native Codex thread
-  memory per Agentify session.
+  memory per Agentify session — recommended for interactive multi-turn
+  assistants, since it avoids resending the full history and restarting the
+  runtime MCP server on every turn.
 - `mcp_tools_enabled`: `True` by default. Requires the Codex SDK
   `thread.turn(...).stream()` API when MCP tools are configured.
 - `auto_mcp_tools`: `True` by default. When `tools=[...]` are passed to a Codex

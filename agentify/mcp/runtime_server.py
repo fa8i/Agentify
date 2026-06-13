@@ -14,7 +14,16 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool as MCPTool
 
 
-def build_runtime_proxy_server(host: str, port: int, token: str) -> Server:
+DEFAULT_CALL_TIMEOUT = 600.0
+
+
+def build_runtime_proxy_server(
+    host: str,
+    port: int,
+    token: str,
+    *,
+    call_timeout: float = DEFAULT_CALL_TIMEOUT,
+) -> Server:
     server = Server(
         "agentify-runtime-mcp-server",
         instructions=(
@@ -38,11 +47,15 @@ def build_runtime_proxy_server(host: str, port: int, token: str) -> Server:
 
     @server.call_tool(validate_input=True)
     async def _call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
+        # The bridge enforces its own tool timeout and replies with a structured
+        # error; the socket timeout only guards against a dead bridge, so it
+        # must outlast the tool timeout.
         response = await _send_request(
             host,
             port,
             token,
             {"action": "call_tool", "name": name, "arguments": arguments},
+            timeout=call_timeout,
         )
         content = response.get("content") or []
         return CallToolResult(
@@ -59,8 +72,14 @@ def build_runtime_proxy_server(host: str, port: int, token: str) -> Server:
     return server
 
 
-async def run_runtime_proxy_server(host: str, port: int, token: str) -> None:
-    server = build_runtime_proxy_server(host, port, token)
+async def run_runtime_proxy_server(
+    host: str,
+    port: int,
+    token: str,
+    *,
+    call_timeout: float = DEFAULT_CALL_TIMEOUT,
+) -> None:
+    server = build_runtime_proxy_server(host, port, token, call_timeout=call_timeout)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -74,12 +93,14 @@ async def _send_request(
     port: int,
     token: str,
     payload: dict[str, Any],
+    *,
+    timeout: float = 30,
 ) -> dict[str, Any]:
     reader, writer = await asyncio.open_connection(host, port)
     request = {"token": token, **payload}
     writer.write((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
     await writer.drain()
-    line = await asyncio.wait_for(reader.readline(), timeout=30)
+    line = await asyncio.wait_for(reader.readline(), timeout=timeout)
     writer.close()
     await writer.wait_closed()
 
@@ -96,10 +117,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--token", required=True)
+    parser.add_argument("--call-timeout", type=float, default=DEFAULT_CALL_TIMEOUT)
     args = parser.parse_args(argv)
 
     try:
-        asyncio.run(run_runtime_proxy_server(args.host, args.port, args.token))
+        asyncio.run(
+            run_runtime_proxy_server(
+                args.host,
+                args.port,
+                args.token,
+                call_timeout=args.call_timeout,
+            )
+        )
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
