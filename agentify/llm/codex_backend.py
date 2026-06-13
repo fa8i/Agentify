@@ -94,12 +94,10 @@ class CodexThreadBackend:
         if self.memory_mode not in {"agentify", "codex_thread"}:
             raise ValueError("Codex memory_mode must be 'agentify' or 'codex_thread'.")
 
-        # How the agent system prompt reaches a persistent Codex thread in
-        # codex_thread mode. "developer" layers it on top of Codex's base
-        # coding-agent harness (keeps native tool framing intact); "base"
-        # replaces that harness for full persona control. Both are passed as
-        # thread-level metadata on every thread_start/thread_resume, so they sit
-        # in the preserved prefix and survive context compaction.
+        # System prompt delivery for codex_thread mode. Passed as thread-level
+        # metadata on every thread_start/thread_resume, so it stays in Codex's
+        # compaction-preserved prefix. "developer" layers it on top of Codex's
+        # base coding-agent harness; "base" replaces that harness entirely.
         self.instructions_mode = str(config.get("instructions_mode", "developer"))
         if self.instructions_mode not in {"base", "developer"}:
             raise ValueError("Codex instructions_mode must be 'base' or 'developer'.")
@@ -134,9 +132,7 @@ class CodexThreadBackend:
             except ImportError:
                 self.codex = AsyncCodex()
 
-        # Whether the installed SDK accepts the chosen instructions kwarg on
-        # thread_start/thread_resume. Older SDKs do not, in which case we fall
-        # back to text-injecting the system prompt on the first turn.
+        # Older SDKs lack the instructions kwarg; we fall back to text injection.
         self._supports_instructions = self._detect_instructions_support()
         if self.memory_mode == "codex_thread" and not self._supports_instructions:
             logger.warning(
@@ -240,9 +236,7 @@ class CodexThreadBackend:
         thread_id = self.thread_ids.get(session_id)
 
         if thread_id is not None:
-            # Resume an existing Codex thread by its persisted ID. Instructions
-            # are re-passed every turn so the persona stays in the preserved
-            # prefix even after Codex compacts older turns.
+            # Resume an existing Codex thread by its persisted ID.
             logger.debug("Resuming Codex thread %s for session %s", thread_id, session_id)
             try:
                 return await self.codex.thread_resume(
@@ -381,11 +375,8 @@ class CodexThreadBackend:
         **kwargs,
     ) -> Any:
         """Send *only* the latest prompt to the Codex thread for this session."""
-        # In codex_thread mode only the latest user message is sent per turn, so
-        # the agent's system prompt must reach Codex out-of-band. We pass it as
-        # thread-level instructions on every thread_start/thread_resume, which
-        # keeps it in the compaction-preserved prefix. On SDKs that lack the
-        # instructions kwarg we fall back to text-injecting it on the first turn.
+        # Deliver the system prompt as thread-level instructions when supported,
+        # else fall back to first-turn text injection (see __init__).
         instructions: str | None = None
         seed_system_prompt: str | None = None
         if self.memory_mode == "codex_thread":
