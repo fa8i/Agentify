@@ -270,7 +270,13 @@ Codex-specific `client_config_override` keys:
   the memory source of truth. Set `"codex_thread"` to reuse native Codex thread
   memory per Agentify session — recommended for interactive multi-turn
   assistants, since it avoids resending the full history and restarting the
-  runtime MCP server on every turn.
+  runtime MCP server on every turn (~1.5–1.7x faster per turn in benchmarks;
+  see `scripts/benchmark_codex_memory_modes.py`).
+- `thread_map_path`: optional path to a JSON file persisting the
+  session → Codex thread ID mapping across process restarts (only meaningful
+  with `memory_mode="codex_thread"`). Codex threads themselves are persisted
+  by the Codex CLI under `~/.codex/`. If a mapped thread no longer exists,
+  Agentify starts a new one for that session and logs a warning.
 - `mcp_tools_enabled`: `True` by default. Requires the Codex SDK
   `thread.turn(...).stream()` API when MCP tools are configured.
 - `auto_mcp_tools`: `True` by default. When `tools=[...]` are passed to a Codex
@@ -287,7 +293,12 @@ Codex-specific notes:
 - `image_path` multimodal input is converted to Codex SDK image input when
   supported by the installed SDK.
 - Runtime MCP tool calls respect `AgentConfig.tool_timeout` and
-  `AgentConfig.max_tool_iter`.
+  `AgentConfig.max_tool_iter`. Tools are registered on the runtime MCP bridge
+  per session, so concurrent turns for different sessions are isolated.
+- `CodexThreadBackend.get_thread_id(session_id)` returns the mapped Codex
+  thread ID; `await CodexThreadBackend.read_session_history(session_id)`
+  returns the native thread history (`ThreadReadResponse`) in
+  `memory_mode="codex_thread"`.
 - Use `agent.close()` or `await agent.aclose()` to release provider resources in
   long-running applications.
 

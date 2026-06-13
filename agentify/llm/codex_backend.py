@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import json
 import os
 import shutil
 import time
@@ -59,9 +60,13 @@ class CodexThreadBackend:
       still written (tool calls and responses are recorded) but Codex thread
       state is what the model actually sees.
 
-    Concurrency note: the runtime MCP bridge holds one tool executor at a
-    time, so do not run concurrent turns for *different* sessions on the same
-    backend instance when tools are attached.
+    Tools are registered on the runtime MCP bridge per session, so concurrent
+    turns for different sessions on the same backend keep isolated executors
+    and memory bindings.
+
+    Set ``thread_map_path`` in the config to persist the session → Codex
+    thread mapping across process restarts (Codex threads themselves are
+    persisted by the Codex CLI under ``~/.codex/``).
     """
     is_native_thread_backend = True
     supports_tools = False
@@ -86,6 +91,12 @@ class CodexThreadBackend:
 
         # agentify_session_id → codex_thread_id (string, not the live object)
         self.thread_ids: Dict[str, str] = {}
+        # Optional JSON file persisting the session → thread mapping across
+        # process restarts (Codex threads themselves survive in ~/.codex/).
+        self.thread_map_path: str | None = (
+            str(config["thread_map_path"]) if config.get("thread_map_path") else None
+        )
+        self._thread_map_loaded = False
 
         codex_path = _find_codex_binary()
         if codex_path is None:
@@ -171,26 +182,96 @@ class CodexThreadBackend:
                 )
                 return await self.codex.thread_start(model=model)
 
+        self._load_thread_map()
         thread_id = self.thread_ids.get(session_id)
 
         if thread_id is not None:
             # Resume an existing Codex thread by its persisted ID
             logger.debug("Resuming Codex thread %s for session %s", thread_id, session_id)
-            thread = await self.codex.thread_resume(
-                thread_id,
-                model=model,
-                config=thread_config,
-            )
-        else:
-            # First interaction — start a brand-new thread
-            logger.debug("Starting new Codex thread for session %s", session_id)
-            thread = await self.codex.thread_start(model=model, config=thread_config)
-            self.thread_ids[session_id] = thread.id
-            logger.info(
-                "Mapped session %s → codex thread %s", session_id, thread.id
-            )
+            try:
+                return await self.codex.thread_resume(
+                    thread_id,
+                    model=model,
+                    config=thread_config,
+                )
+            except Exception as exc:
+                if not _is_missing_thread_error(exc):
+                    raise
+                # The thread vanished from ~/.codex (deleted, archived, or a
+                # different machine). Recover with a fresh thread instead of
+                # failing the session forever.
+                logger.warning(
+                    "Codex thread %s for session %s could not be resumed (%s); "
+                    "starting a new thread. Previous Codex-side context is lost.",
+                    thread_id,
+                    session_id,
+                    exc,
+                )
+                self.thread_ids.pop(session_id, None)
+
+        # First interaction (or recovery) — start a brand-new thread
+        logger.debug("Starting new Codex thread for session %s", session_id)
+        thread = await self.codex.thread_start(model=model, config=thread_config)
+        self.thread_ids[session_id] = thread.id
+        self._save_thread_map()
+        logger.info("Mapped session %s → codex thread %s", session_id, thread.id)
 
         return thread
+
+    # ------------------------------------------------------------------
+    # Session → thread map persistence (codex_thread mode)
+    # ------------------------------------------------------------------
+
+    def _load_thread_map(self) -> None:
+        if self._thread_map_loaded or not self.thread_map_path:
+            return
+        self._thread_map_loaded = True
+        path = os.path.expanduser(self.thread_map_path)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except FileNotFoundError:
+            return
+        except Exception as exc:
+            logger.warning("Could not load Codex thread map from %s: %s", path, exc)
+            return
+        if isinstance(data, dict):
+            for key, value in data.items():
+                self.thread_ids.setdefault(str(key), str(value))
+
+    def _save_thread_map(self) -> None:
+        if not self.thread_map_path:
+            return
+        path = os.path.expanduser(self.thread_map_path)
+        try:
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            tmp_path = f"{path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(self.thread_ids, handle, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+        except Exception as exc:
+            logger.warning("Could not persist Codex thread map to %s: %s", path, exc)
+
+    def get_thread_id(self, session_id: str) -> str | None:
+        """Return the Codex thread ID mapped to a session, if any."""
+        self._load_thread_map()
+        return self.thread_ids.get(session_id)
+
+    async def read_session_history(self, session_id: str, *, include_turns: bool = True):
+        """Read the native Codex thread history for a session.
+
+        Only meaningful in ``memory_mode="codex_thread"``. Returns the SDK
+        ``ThreadReadResponse`` (``response.thread.items`` per turn when
+        ``include_turns=True``), hydrated from the rollout files Codex keeps
+        under ``~/.codex/``.
+        """
+        thread_id = self.get_thread_id(session_id)
+        if thread_id is None:
+            raise KeyError(f"No Codex thread is mapped for session '{session_id}'.")
+        thread = await self.codex.thread_resume(thread_id)
+        return await thread.read(include_turns=include_turns)
 
     # ------------------------------------------------------------------
     # Public API
@@ -212,6 +293,7 @@ class CodexThreadBackend:
         )
         thread_config = await self._build_thread_config(
             kwargs.get("agentify_tools"),
+            session_id=session_id,
             tool_timeout=kwargs.get("agentify_tool_timeout"),
             tool_executor=kwargs.get("agentify_tool_executor"),
         )
@@ -234,6 +316,7 @@ class CodexThreadBackend:
                 thread,
                 prompt,
                 output_schema=output_schema,
+                session_id=session_id if thread_config is not None else None,
             )
         else:
             if self.mcp_tools_enabled:
@@ -257,6 +340,7 @@ class CodexThreadBackend:
         self,
         tools: Any,
         *,
+        session_id: str,
         tool_timeout: float | None = None,
         tool_executor: Any = None,
     ) -> dict[str, Any] | None:
@@ -281,10 +365,15 @@ class CodexThreadBackend:
         if self._runtime_mcp_bridge is None:
             self._runtime_mcp_bridge = RuntimeMCPBridge()
             await self._runtime_mcp_bridge.start()
-        self._runtime_mcp_bridge.update_tools(list(tools))
-        self._runtime_mcp_bridge.update_tool_timeout(tool_timeout)
-        self._runtime_mcp_bridge.update_tool_executor(tool_executor)
-        return self._runtime_mcp_bridge.codex_config()
+        # Per-session registration: concurrent turns for different sessions
+        # each keep their own tools, timeout, and memory-bound executor.
+        self._runtime_mcp_bridge.register_session(
+            session_id,
+            tools=list(tools),
+            tool_timeout=tool_timeout,
+            tool_executor=tool_executor,
+        )
+        return self._runtime_mcp_bridge.codex_config(session_id)
 
     async def _run_thread_turn_from_events(
         self,
@@ -292,6 +381,7 @@ class CodexThreadBackend:
         prompt: Any,
         *,
         output_schema: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> str:
         from agentify.llm.codex_events import CodexEventCollector
 
@@ -319,7 +409,12 @@ class CodexThreadBackend:
         if result.errors:
             raise_codex_errors(result.errors)
         if not result.final_text:
-            raise CodexEmptyTurnError(self._empty_turn_message(result))
+            mcp_status = None
+            if session_id is not None:
+                mcp_status = await self._mcp_server_diagnostics()
+            raise CodexEmptyTurnError(
+                self._empty_turn_message(result, session_id=session_id, mcp_status=mcp_status)
+            )
         if result.warnings:
             logger.info(
                 "Codex turn recovered after transient errors: %s",
@@ -327,7 +422,13 @@ class CodexThreadBackend:
             )
         return result.final_text
 
-    def _empty_turn_message(self, result: Any) -> str:
+    def _empty_turn_message(
+        self,
+        result: Any,
+        *,
+        session_id: str | None = None,
+        mcp_status: str | None = None,
+    ) -> str:
         """Build an actionable error for a turn that produced no text."""
         parts = [
             "Codex turn completed without reconstructible text. "
@@ -337,8 +438,9 @@ class CodexThreadBackend:
         if result.warnings:
             parts.append(f"Transient errors during the turn: {'; '.join(result.warnings)}")
         bridge = self._runtime_mcp_bridge
-        if bridge is not None:
-            if bridge.connection_count == 0:
+        if bridge is not None and session_id is not None:
+            served = bridge.session_connection_count(session_id)
+            if served == 0:
                 parts.append(
                     "The Agentify runtime MCP server never connected: Codex likely "
                     "failed to start it (check the `codex` CLI version, MCP support, "
@@ -346,10 +448,41 @@ class CodexThreadBackend:
                 )
             else:
                 parts.append(
-                    f"Runtime MCP bridge served {bridge.connection_count} request(s), "
+                    f"Runtime MCP bridge served {served} request(s) for this session, "
                     "so the MCP path was working."
                 )
+        if mcp_status:
+            parts.append(mcp_status)
         return " ".join(parts)
+
+    async def _mcp_server_diagnostics(self) -> str | None:
+        """Best-effort: ask Codex which MCP servers and tools it can see."""
+        try:
+            from openai_codex.generated.v2_all import ListMcpServerStatusResponse
+
+            client = getattr(self.codex, "_client", None)
+            request = getattr(client, "request", None)
+            if request is None:
+                return None
+            response = await asyncio.wait_for(
+                request(
+                    "mcpServerStatus/list",
+                    {"limit": 50},
+                    response_model=ListMcpServerStatusResponse,
+                ),
+                timeout=10,
+            )
+            servers = getattr(response, "data", None) or []
+            if not servers:
+                return "Codex reports no MCP servers configured."
+            summaries = [
+                f"{getattr(server, 'name', '?')} ({len(getattr(server, 'tools', None) or {})} tools)"
+                for server in servers
+            ]
+            return "Codex MCP servers visible: " + ", ".join(summaries) + "."
+        except Exception as exc:
+            logger.debug("mcpServerStatus/list diagnostics unavailable: %s", exc)
+            return None
 
     async def _stream_thread_turn_events(
         self,
@@ -510,6 +643,15 @@ class CodexThreadBackend:
             self._chat = self.Chat()
             self._chat.completions = self.Chat.Completions(self)
         return self._chat
+
+
+def _is_missing_thread_error(exc: Exception) -> bool:
+    """True when an exception indicates the Codex thread no longer exists."""
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in ("not found", "no such", "does not exist", "unknown thread", "missing")
+    )
 
 
 def _find_codex_binary() -> str | None:

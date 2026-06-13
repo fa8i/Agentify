@@ -533,6 +533,59 @@ Choosing a memory mode:
   calls, but Codex thread state is what the model sees, so out-of-band edits to
   Agentify memory will not reach the model.
 
+Measured difference (gpt-5.4, 4 short turns, real ChatGPT OAuth): with an
+Agentify tool attached, `codex_thread` averaged ~8s/turn vs ~12s/turn for
+`agentify` (~1.5x); without tools, ~3.5s vs ~5.8s (~1.7x). The gap grows with
+conversation length because `agentify` resends the full history every turn.
+Reproduce with `scripts/benchmark_codex_memory_modes.py`.
+
+### How Codex thread memory works
+
+In `memory_mode="codex_thread"`, conversation memory is managed by the Codex
+CLI (`codex app-server`), not by Agentify:
+
+- **Storage**: each thread is persisted on disk under `~/.codex/` as a rollout
+  JSONL file in `sessions/<year>/...`, indexed by `session_index.jsonl` and
+  SQLite state databases. Archived threads move to `archived_sessions/`.
+  `~/.codex/auth.json` holds the OAuth tokens — Agentify never reads it, and
+  neither should your application or logs.
+- **Lifetime**: threads survive process restarts and are resumable by ID. The
+  ephemeral threads used by `memory_mode="agentify"` are *not* persisted.
+- **Context management**: Codex tracks token usage per thread and
+  automatically compacts (summarizes) the thread when it approaches the model
+  context window, so long-running sessions do not need manual pruning.
+
+Agentify keeps a session → Codex thread ID mapping in the backend. By default
+it lives in memory, so a process restart starts fresh threads. To make
+sessions durable across restarts, persist the mapping (a plain JSON file of
+IDs, no secrets):
+
+```python
+config = AgentConfig(
+    provider="codex",
+    model_name="gpt-5.4",
+    client_config_override={
+        "memory_mode": "codex_thread",
+        "thread_map_path": "~/.agentify/codex_threads.json",
+    },
+)
+```
+
+If a mapped thread no longer exists on disk (deleted, archived elsewhere),
+Agentify logs a warning and transparently starts a new thread for that session
+instead of failing; transient resume errors are still raised so a network blip
+never silently discards context.
+
+To inspect the native thread state, the Codex backend exposes:
+
+```python
+backend = agent._get_async_client()          # CodexThreadBackend
+thread_id = backend.get_thread_id(session_id)
+response = await backend.read_session_history(session_id)  # ThreadReadResponse
+for item in response.thread.items:
+    ...
+```
+
 Call `agent.close()` or `await agent.aclose()` in long-running applications to
 release provider resources such as the runtime MCP bridge.
 

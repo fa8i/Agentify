@@ -233,7 +233,9 @@ def test_codex_backend_builds_multimodal_prompt_from_agentify_messages(mock_code
     )
 
     assert isinstance(prompt, list)
-    assert any(getattr(item, "text", "").startswith("Use the following") for item in prompt)
+    assert any(
+        "Agentify-managed conversation" in getattr(item, "text", "") for item in prompt
+    )
     assert any(getattr(item, "url", "") == "data:image/jpeg;base64,abc123" for item in prompt)
     assert any("What is in this image?" in getattr(item, "text", "") for item in prompt)
 
@@ -684,6 +686,127 @@ def test_codex_backend_empty_turn_with_unused_bridge_mentions_mcp_startup(mock_c
     finally:
         if backend._runtime_mcp_bridge is not None:
             asyncio.run(backend._runtime_mcp_bridge.close())
+
+
+def test_codex_backend_persists_thread_map(mock_codex, tmp_path):
+    map_path = str(tmp_path / "threads.json")
+    backend = CodexThreadBackend(
+        config={"memory_mode": "codex_thread", "thread_map_path": map_path},
+        timeout=30,
+    )
+
+    asyncio.run(backend.run_native(session_id="s1", model="gpt-5.4", prompt="hi"))
+
+    import json as json_module
+
+    with open(map_path, encoding="utf-8") as handle:
+        stored = json_module.load(handle)
+    assert stored == {"s1": "codex_thread_1"}
+
+    # A fresh backend (new process) resumes the same thread from the map.
+    backend2 = CodexThreadBackend(
+        config={"memory_mode": "codex_thread", "thread_map_path": map_path},
+        timeout=30,
+    )
+    asyncio.run(backend2.run_native(session_id="s1", model="gpt-5.4", prompt="again"))
+
+    assert backend2.codex.resumed_ids == ["codex_thread_1"]
+    assert backend2.codex._thread_counter == 0
+
+
+def test_codex_backend_recovers_when_resumed_thread_is_missing(mock_codex):
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+    backend.thread_ids["s1"] = "stale_thread"
+
+    async def failing_resume(thread_id, **kwargs):
+        raise RuntimeError(f"thread {thread_id} not found")
+
+    backend.codex.thread_resume = failing_resume
+
+    response = asyncio.run(
+        backend.run_native(session_id="s1", model="gpt-5.4", prompt="hi")
+    )
+
+    assert response.choices[0].message.content == "Response to: hi"
+    assert backend.thread_ids["s1"] == "codex_thread_1"
+
+
+def test_codex_backend_does_not_mask_transient_resume_errors(mock_codex):
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+    backend.thread_ids["s1"] = "live_thread"
+
+    async def failing_resume(thread_id, **kwargs):
+        raise RuntimeError("transport closed unexpectedly")
+
+    backend.codex.thread_resume = failing_resume
+
+    with pytest.raises(RuntimeError, match="transport closed"):
+        asyncio.run(backend.run_native(session_id="s1", model="gpt-5.4", prompt="hi"))
+    # The mapping is preserved so the session can resume after the blip.
+    assert backend.thread_ids["s1"] == "live_thread"
+
+
+def test_codex_backend_get_thread_id_and_read_history(mock_codex):
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+
+    asyncio.run(backend.run_native(session_id="s1", model="gpt-5.4", prompt="hi"))
+
+    assert backend.get_thread_id("s1") == "codex_thread_1"
+    assert backend.get_thread_id("unknown") is None
+    with pytest.raises(KeyError, match="unknown"):
+        asyncio.run(backend.read_session_history("unknown"))
+
+
+def test_codex_backend_empty_turn_includes_mcp_status_diagnostics(mock_codex):
+    tool = Tool(schema={"name": "example", "parameters": {"type": "object"}}, func=lambda: "ok")
+    backend = CodexThreadBackend(config={}, timeout=30)
+    backend._get_or_create_thread = AsyncMock(
+        return_value=_event_stream_thread([_completed_event()])
+    )
+    backend._mcp_server_diagnostics = AsyncMock(
+        return_value="Codex MCP servers visible: agentify-runtime-tools (1 tools)."
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="agentify-runtime-tools \\(1 tools\\)"):
+            asyncio.run(
+                backend.run_native(
+                    session_id="s",
+                    model="m",
+                    prompt="p",
+                    agentify_tools=[tool],
+                )
+            )
+    finally:
+        if backend._runtime_mcp_bridge is not None:
+            asyncio.run(backend._runtime_mcp_bridge.close())
+
+
+def test_codex_backend_registers_isolated_bridge_sessions(mock_codex):
+    tool = Tool(schema={"name": "example", "parameters": {"type": "object"}}, func=lambda: "ok")
+    backend = CodexThreadBackend(config={}, timeout=30)
+
+    try:
+        asyncio.run(
+            backend.run_native(
+                session_id="session_a", model="m", prompt="p", agentify_tools=[tool]
+            )
+        )
+        asyncio.run(
+            backend.run_native(
+                session_id="session_b", model="m", prompt="p", agentify_tools=[tool]
+            )
+        )
+    finally:
+        if backend._runtime_mcp_bridge is not None:
+            asyncio.run(backend._runtime_mcp_bridge.close())
+
+    config = backend.codex.thread_start_kwargs[-1]["config"]
+    args = config["mcp_servers"]["agentify-runtime-tools"]["args"]
+    assert args[args.index("--session") + 1] == "session_b"
+    assert backend._runtime_mcp_bridge.session_connection_count("session_a") == 0
+    assert "session_a" in backend._runtime_mcp_bridge._sessions
+    assert "session_b" in backend._runtime_mcp_bridge._sessions
 
 
 def test_codex_backend_marks_usage_limit_non_retryable(mock_codex):

@@ -23,6 +23,7 @@ def build_runtime_proxy_server(
     token: str,
     *,
     call_timeout: float = DEFAULT_CALL_TIMEOUT,
+    session: str | None = None,
 ) -> Server:
     server = Server(
         "agentify-runtime-mcp-server",
@@ -32,9 +33,15 @@ def build_runtime_proxy_server(
         ),
     )
 
+    def _base_payload(action: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {"action": action}
+        if session is not None:
+            payload["session"] = session
+        return payload
+
     @server.list_tools()
     async def _list_tools() -> list[MCPTool]:
-        response = await _send_request(host, port, token, {"action": "list_tools"})
+        response = await _send_request(host, port, token, _base_payload("list_tools"))
         return [
             MCPTool(
                 name=tool["name"],
@@ -50,13 +57,9 @@ def build_runtime_proxy_server(
         # The bridge enforces its own tool timeout and replies with a structured
         # error; the socket timeout only guards against a dead bridge, so it
         # must outlast the tool timeout.
-        response = await _send_request(
-            host,
-            port,
-            token,
-            {"action": "call_tool", "name": name, "arguments": arguments},
-            timeout=call_timeout,
-        )
+        payload = _base_payload("call_tool")
+        payload.update({"name": name, "arguments": arguments})
+        response = await _send_request(host, port, token, payload, timeout=call_timeout)
         content = response.get("content") or []
         return CallToolResult(
             content=[
@@ -78,8 +81,11 @@ async def run_runtime_proxy_server(
     token: str,
     *,
     call_timeout: float = DEFAULT_CALL_TIMEOUT,
+    session: str | None = None,
 ) -> None:
-    server = build_runtime_proxy_server(host, port, token, call_timeout=call_timeout)
+    server = build_runtime_proxy_server(
+        host, port, token, call_timeout=call_timeout, session=session
+    )
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -118,6 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--token", required=True)
     parser.add_argument("--call-timeout", type=float, default=DEFAULT_CALL_TIMEOUT)
+    parser.add_argument("--session", default=None)
     args = parser.parse_args(argv)
 
     try:
@@ -127,6 +134,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.port,
                 args.token,
                 call_timeout=args.call_timeout,
+                session=args.session,
             )
         )
     except KeyboardInterrupt:

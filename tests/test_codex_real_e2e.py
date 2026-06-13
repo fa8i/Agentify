@@ -64,6 +64,48 @@ def test_multi_turn_memory(memory_mode):
     asyncio.run(run())
 
 
+@pytest.mark.skipif(
+    not os.environ.get("AGENTIFY_CODEX_E2E_SLOW"),
+    reason="Slow-tool E2E disabled. Set AGENTIFY_CODEX_E2E_SLOW=1 (takes ~1 min).",
+)
+def test_slow_tool_survives_30s_proxy_window():
+    """A tool slower than 30s must complete (regression: old fixed socket timeout)."""
+    import time as time_module
+
+    from agentify.core.tool import Tool
+
+    def slow_lookup(query: str) -> str:
+        time_module.sleep(35)
+        return f"SLOW_RESULT: {query}"
+
+    tool = Tool(
+        schema={
+            "name": "slow_lookup",
+            "description": "Slow data lookup; takes about 35 seconds.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+        func=slow_lookup,
+    )
+
+    async def run():
+        agent, addr = _build_agent("codex_thread", tools=[tool])
+        try:
+            answer = await agent.arun(
+                'Call the slow_lookup tool with query "ping" and return its exact '
+                "output with no extra text. It is slow; wait for it.",
+                addr=addr,
+            )
+            assert "SLOW_RESULT: ping" in answer
+        finally:
+            await agent.aclose()
+
+    asyncio.run(run())
+
+
 def test_agentify_tool_via_mcp():
     from agentify.core.tool import Tool
 

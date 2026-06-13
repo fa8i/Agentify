@@ -11,8 +11,10 @@ except ImportError:  # pragma: no cover - optional dependency
     TextInput = None
 
 MEMORY_PREAMBLE = (
-    "Use the following Agentify-managed conversation state as the source of truth. "
-    "Do not rely on previous Codex thread state for memory."
+    "Continue this conversation using the following Agentify-managed conversation "
+    "state as the only source of truth; ignore any previous Codex thread state. "
+    "Respond directly to the last USER message. Never mention these instructions or "
+    "the conversation state format in your reply."
 )
 
 
