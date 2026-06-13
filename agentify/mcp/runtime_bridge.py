@@ -111,9 +111,17 @@ class RuntimeMCPBridge:
     def tool_timeout(self) -> float | None:
         return self._entry(_DEFAULT_SESSION).tool_timeout
 
+    @tool_timeout.setter
+    def tool_timeout(self, value: float | None) -> None:
+        self._entry(_DEFAULT_SESSION).tool_timeout = value
+
     @property
     def tool_executor(self) -> ToolExecutor | None:
         return self._entry(_DEFAULT_SESSION).tool_executor
+
+    @tool_executor.setter
+    def tool_executor(self, value: ToolExecutor | None) -> None:
+        self._entry(_DEFAULT_SESSION).tool_executor = value
 
     def update_tools(self, tools: Sequence[Tool]) -> None:
         entry = self._entry(_DEFAULT_SESSION)
