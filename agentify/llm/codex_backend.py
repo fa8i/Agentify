@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import inspect
 import json
 import os
 import shutil
@@ -92,6 +93,19 @@ class CodexThreadBackend:
         self.memory_mode = str(config.get("memory_mode", "agentify"))
         if self.memory_mode not in {"agentify", "codex_thread"}:
             raise ValueError("Codex memory_mode must be 'agentify' or 'codex_thread'.")
+
+        # How the agent system prompt reaches a persistent Codex thread in
+        # codex_thread mode. "developer" layers it on top of Codex's base
+        # coding-agent harness (keeps native tool framing intact); "base"
+        # replaces that harness for full persona control. Both are passed as
+        # thread-level metadata on every thread_start/thread_resume, so they sit
+        # in the preserved prefix and survive context compaction.
+        self.instructions_mode = str(config.get("instructions_mode", "developer"))
+        if self.instructions_mode not in {"base", "developer"}:
+            raise ValueError("Codex instructions_mode must be 'base' or 'developer'.")
+        self._instructions_kwarg = (
+            "base_instructions" if self.instructions_mode == "base" else "developer_instructions"
+        )
         self._runtime_mcp_bridge: RuntimeMCPBridge | None = None
 
         # agentify_session_id → codex_thread_id (string, not the live object)
@@ -120,6 +134,36 @@ class CodexThreadBackend:
             except ImportError:
                 self.codex = AsyncCodex()
 
+        # Whether the installed SDK accepts the chosen instructions kwarg on
+        # thread_start/thread_resume. Older SDKs do not, in which case we fall
+        # back to text-injecting the system prompt on the first turn.
+        self._supports_instructions = self._detect_instructions_support()
+        if self.memory_mode == "codex_thread" and not self._supports_instructions:
+            logger.warning(
+                "Installed openai-codex SDK does not accept '%s' on thread_start/resume; "
+                "falling back to first-turn text injection of the system prompt (it may "
+                "degrade under context compaction). Upgrade with `pip install -U openai-codex`.",
+                self._instructions_kwarg,
+            )
+
+    def _detect_instructions_support(self) -> bool:
+        def accepts(fn: Any) -> bool:
+            try:
+                params = list(inspect.signature(fn).parameters.values())
+            except (ValueError, TypeError):  # pragma: no cover - defensive
+                return False
+            if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+                return True
+            return self._instructions_kwarg in {p.name for p in params}
+
+        return accepts(self.codex.thread_start) and accepts(self.codex.thread_resume)
+
+    def _instr_kwargs(self, instructions: str | None) -> dict[str, str]:
+        """Thread-level instruction kwargs to pass to thread_start/thread_resume."""
+        if instructions and self._supports_instructions:
+            return {self._instructions_kwarg: instructions}
+        return {}
+
     async def close(self) -> None:
         """Close runtime resources owned by the Codex backend."""
         if self._runtime_mcp_bridge is not None:
@@ -139,12 +183,13 @@ class CodexThreadBackend:
         model: str,
         *,
         thread_config: dict[str, Any] | None = None,
+        instructions: str | None = None,
     ):
         """Return a live AsyncThread, creating or resuming as needed."""
         started_at = time.monotonic()
         try:
             thread = await self._acquire_thread(
-                session_id, model, thread_config=thread_config
+                session_id, model, thread_config=thread_config, instructions=instructions
             )
         except FileNotFoundError as exc:
             raise CodexCLINotFoundError(
@@ -166,6 +211,7 @@ class CodexThreadBackend:
         model: str,
         *,
         thread_config: dict[str, Any] | None = None,
+        instructions: str | None = None,
     ):
         if self.memory_mode == "agentify":
             logger.debug("Starting ephemeral Codex thread for Agentify-managed memory")
@@ -194,13 +240,16 @@ class CodexThreadBackend:
         thread_id = self.thread_ids.get(session_id)
 
         if thread_id is not None:
-            # Resume an existing Codex thread by its persisted ID
+            # Resume an existing Codex thread by its persisted ID. Instructions
+            # are re-passed every turn so the persona stays in the preserved
+            # prefix even after Codex compacts older turns.
             logger.debug("Resuming Codex thread %s for session %s", thread_id, session_id)
             try:
                 return await self.codex.thread_resume(
                     thread_id,
                     model=model,
                     config=thread_config,
+                    **self._instr_kwargs(instructions),
                 )
             except Exception as exc:
                 if not _is_missing_thread_error(exc):
@@ -219,7 +268,11 @@ class CodexThreadBackend:
 
         # First interaction (or recovery) — start a brand-new thread
         logger.debug("Starting new Codex thread for session %s", session_id)
-        thread = await self.codex.thread_start(model=model, config=thread_config)
+        thread = await self.codex.thread_start(
+            model=model,
+            config=thread_config,
+            **self._instr_kwargs(instructions),
+        )
         self.thread_ids[session_id] = thread.id
         self._save_thread_map()
         logger.info("Mapped session %s → codex thread %s", session_id, thread.id)
@@ -329,13 +382,19 @@ class CodexThreadBackend:
     ) -> Any:
         """Send *only* the latest prompt to the Codex thread for this session."""
         # In codex_thread mode only the latest user message is sent per turn, so
-        # the agent's system prompt would never reach Codex. Seed it once, on the
-        # first turn of a brand-new thread; it then persists in the Codex thread.
+        # the agent's system prompt must reach Codex out-of-band. We pass it as
+        # thread-level instructions on every thread_start/thread_resume, which
+        # keeps it in the compaction-preserved prefix. On SDKs that lack the
+        # instructions kwarg we fall back to text-injecting it on the first turn.
+        instructions: str | None = None
         seed_system_prompt: str | None = None
         if self.memory_mode == "codex_thread":
             self._load_thread_map()
-            if session_id not in self.thread_ids:
-                seed_system_prompt = extract_system_prompt(kwargs.get("messages"))
+            system_prompt = extract_system_prompt(kwargs.get("messages"))
+            if self._supports_instructions:
+                instructions = system_prompt
+            elif system_prompt and session_id not in self.thread_ids:
+                seed_system_prompt = system_prompt
 
         prompt = build_codex_turn_input(
             prompt,
@@ -354,6 +413,7 @@ class CodexThreadBackend:
             session_id,
             model,
             thread_config=thread_config,
+            instructions=instructions,
         )
         output_schema = extract_output_schema(kwargs)
 

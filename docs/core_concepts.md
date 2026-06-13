@@ -554,6 +554,13 @@ CLI (`codex app-server`), not by Agentify:
 - **Context management**: Codex tracks token usage per thread and
   automatically compacts (summarizes) the thread when it approaches the model
   context window, so long-running sessions do not need manual pruning.
+- **System prompt**: the agent system prompt is passed as thread-level
+  instructions on every `thread_start`/`thread_resume` (not as conversation
+  text). Codex keeps it in the compaction-preserved prefix and Agentify
+  re-applies it each turn, so the agent persona does not degrade as the thread
+  is compacted. Use `instructions_mode="base"` to fully replace Codex's native
+  coding-agent harness, or the default `"developer"` to layer the prompt on top
+  of it (see the API reference).
 
 Agentify keeps a session → Codex thread ID mapping in the backend. By default
 it lives in memory, so a process restart starts fresh threads. To make

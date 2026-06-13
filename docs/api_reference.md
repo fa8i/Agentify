@@ -328,6 +328,16 @@ Codex-specific `client_config_override` keys:
   with `memory_mode="codex_thread"`). Codex threads themselves are persisted
   by the Codex CLI under `~/.codex/`. If a mapped thread no longer exists,
   Agentify starts a new one for that session and logs a warning.
+- `instructions_mode`: `"developer"` by default (only used in
+  `memory_mode="codex_thread"`). Controls how the agent system prompt reaches the
+  persistent Codex thread. It is passed as thread-level instructions on every
+  `thread_start`/`thread_resume`, so it lives in Codex's compaction-preserved
+  prefix and is re-applied each turn — the persona does not degrade as the thread
+  grows. `"developer"` layers the prompt on top of Codex's native coding-agent and
+  tool harness; `"base"` replaces that harness for full persona control. Both keep
+  runtime MCP tools working; `"developer"` is the non-destructive default. On SDKs
+  that lack the instructions parameter, Agentify falls back to injecting the system
+  prompt as text on the first turn.
 - `mcp_tools_enabled`: `True` by default. Requires the Codex SDK
   `thread.turn(...).stream()` API when MCP tools are configured.
 - `auto_mcp_tools`: `True` by default. When `tools=[...]` are passed to a Codex

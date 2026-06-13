@@ -156,10 +156,14 @@ benchmarks) and can persist sessions across restarts:
 client_config_override={
     "memory_mode": "codex_thread",
     "thread_map_path": "~/.agentify/codex_threads.json",  # optional
+    "instructions_mode": "developer",  # optional: "developer" (default) | "base"
 }
 ```
 
-See [Core Concepts](docs/core_concepts.md) for how Codex thread memory works.
+In `codex_thread` mode the system prompt is passed as thread-level instructions
+on every turn, so it stays in Codex's compaction-preserved prefix and the agent
+persona does not degrade as the conversation grows. See
+[Core Concepts](docs/core_concepts.md) for how Codex thread memory works.
 
 ## Documentation
 

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.3] - 2026-06-13
+
+### Changed
+- **Codex System Prompt Survives Compaction (`memory_mode="codex_thread"`)**: The agent
+  system prompt is now passed as thread-level instructions on every `thread_start`
+  **and** `thread_resume`, instead of being text-injected into the first user turn.
+  Codex keeps these in the compaction-preserved prefix (outside the compactable
+  conversation body), so the persona no longer degrades as the thread grows, and it
+  is re-applied on every turn (also covering thread recovery after a lost thread).
+- **New `instructions_mode` option** (`client_config_override`): `"developer"` (default)
+  layers the system prompt on top of Codex's native coding-agent/tool harness;
+  `"base"` replaces that harness for full persona control. Both were verified to keep
+  runtime MCP tool calls working and to honor the persona; `"developer"` is the default
+  as the non-destructive choice.
+
+### Compatibility
+- SDKs that do not accept the instructions kwarg on `thread_start`/`thread_resume` fall
+  back to the previous first-turn text injection automatically (a warning is logged).
+
 ## [0.6.2] - 2026-06-13
 
 ### Added

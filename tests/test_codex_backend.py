@@ -32,6 +32,7 @@ class MockThread:
     def __init__(self, thread_id: str):
         self.id = thread_id
         self.run_called_with = []
+        self.turn_called_with = []
 
     async def run(self, prompt: str):
         self.run_called_with.append(prompt)
@@ -40,6 +41,7 @@ class MockThread:
         return mock_result
 
     async def turn(self, prompt: str):
+        self.turn_called_with.append(prompt)
         class Stream:
             def __init__(self, text: str):
                 self._events = iter(
@@ -81,16 +83,23 @@ class MockAsyncCodex:
         self._thread_counter = 0
         self.resumed_ids = []
         self.thread_start_kwargs = []
+        self.thread_resume_kwargs = []
+        self.threads = []
         self.closed = False
 
     async def thread_start(self, model: str, **kwargs):
         self.thread_start_kwargs.append(kwargs)
         self._thread_counter += 1
-        return MockThread(thread_id=f"codex_thread_{self._thread_counter}")
+        thread = MockThread(thread_id=f"codex_thread_{self._thread_counter}")
+        self.threads.append(thread)
+        return thread
 
     async def thread_resume(self, thread_id: str, **kwargs):
         self.resumed_ids.append(thread_id)
-        return MockThread(thread_id=thread_id)
+        self.thread_resume_kwargs.append(kwargs)
+        thread = MockThread(thread_id=thread_id)
+        self.threads.append(thread)
+        return thread
 
     async def close(self):
         self.closed = True
@@ -254,6 +263,93 @@ def test_codex_backend_codex_thread_mode_uses_latest_prompt(mock_codex):
 def test_codex_backend_rejects_invalid_memory_mode(mock_codex):
     with pytest.raises(ValueError, match="memory_mode"):
         CodexThreadBackend(config={"memory_mode": "bad"}, timeout=30)
+
+
+def test_codex_backend_rejects_invalid_instructions_mode(mock_codex):
+    with pytest.raises(ValueError, match="instructions_mode"):
+        CodexThreadBackend(config={"instructions_mode": "bad"}, timeout=30)
+
+
+def test_codex_thread_passes_developer_instructions_every_turn(mock_codex):
+    """System prompt flows as thread-level instructions on start AND resume."""
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+    assert backend.instructions_mode == "developer"
+    assert backend._supports_instructions is True
+
+    messages = [
+        {"role": "system", "content": "You are Janus."},
+        {"role": "user", "content": "hi"},
+    ]
+
+    # First turn → thread_start carries the instructions
+    asyncio.run(
+        backend.run_native(
+            session_id="s1", model="gpt-5.5", prompt="hi", messages=messages
+        )
+    )
+    assert backend.codex.thread_start_kwargs[0]["developer_instructions"] == "You are Janus."
+
+    # Second turn → thread_resume re-passes them (survives compaction)
+    asyncio.run(
+        backend.run_native(
+            session_id="s1", model="gpt-5.5", prompt="again", messages=messages
+        )
+    )
+    assert backend.codex.thread_resume_kwargs[0]["developer_instructions"] == "You are Janus."
+
+
+def test_codex_thread_instructions_mode_base_uses_base_instructions(mock_codex):
+    backend = CodexThreadBackend(
+        config={"memory_mode": "codex_thread", "instructions_mode": "base"}, timeout=30
+    )
+    assert backend._instructions_kwarg == "base_instructions"
+
+    messages = [{"role": "system", "content": "Persona."}, {"role": "user", "content": "hi"}]
+    asyncio.run(
+        backend.run_native(session_id="s1", model="gpt-5.5", prompt="hi", messages=messages)
+    )
+    kwargs = backend.codex.thread_start_kwargs[0]
+    assert kwargs["base_instructions"] == "Persona."
+    assert "developer_instructions" not in kwargs
+
+
+def test_codex_thread_no_text_injection_when_instructions_supported(mock_codex):
+    """With native instructions support, the prompt is not prefixed with system text."""
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+    messages = [{"role": "system", "content": "Persona."}, {"role": "user", "content": "hi"}]
+    asyncio.run(
+        backend.run_native(session_id="s1", model="gpt-5.5", prompt="hi", messages=messages)
+    )
+    sent_prompt = backend.codex.threads[0].turn_called_with[0]
+    assert "SYSTEM INSTRUCTIONS" not in sent_prompt
+    assert sent_prompt == "hi"
+
+
+def test_codex_thread_falls_back_to_text_injection_without_support(mock_codex):
+    """Old SDKs without the instructions kwarg keep the first-turn text injection."""
+    backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
+    backend._supports_instructions = False  # simulate an older SDK
+
+    messages = [{"role": "system", "content": "Persona."}, {"role": "user", "content": "hi"}]
+    asyncio.run(
+        backend.run_native(session_id="s1", model="gpt-5.5", prompt="hi", messages=messages)
+    )
+    sent_prompt = backend.codex.threads[0].turn_called_with[0]
+    assert "SYSTEM INSTRUCTIONS" in sent_prompt
+    assert "Persona." in sent_prompt
+    # And no instructions kwarg leaked to the SDK
+    assert "developer_instructions" not in backend.codex.thread_start_kwargs[0]
+
+
+def test_codex_agentify_mode_does_not_pass_instructions(mock_codex):
+    """In agentify mode the system message is already in the rebuilt history."""
+    backend = CodexThreadBackend(config={"memory_mode": "agentify"}, timeout=30)
+    messages = [{"role": "system", "content": "Persona."}, {"role": "user", "content": "hi"}]
+    asyncio.run(
+        backend.run_native(session_id="s1", model="gpt-5.5", prompt="hi", messages=messages)
+    )
+    assert "developer_instructions" not in backend.codex.thread_start_kwargs[0]
+    assert "base_instructions" not in backend.codex.thread_start_kwargs[0]
 
 
 def test_codex_backend_auto_mcp_tools_adds_runtime_config(mock_codex):
@@ -714,7 +810,8 @@ def test_codex_backend_persists_thread_map(mock_codex, tmp_path):
     assert backend2.codex._thread_counter == 0
 
 
-def test_codex_thread_mode_seeds_system_prompt_on_first_turn_only(mock_codex):
+def test_codex_thread_mode_keeps_system_prompt_out_of_conversation(mock_codex):
+    """With instructions support, the system prompt never enters the turn text."""
     backend = CodexThreadBackend(config={"memory_mode": "codex_thread"}, timeout=30)
     messages = [
         {"role": "system", "content": "You are Janus, a personal assistant."},
@@ -723,24 +820,31 @@ def test_codex_thread_mode_seeds_system_prompt_on_first_turn_only(mock_codex):
 
     first = asyncio.run(
         backend.run_native(
-            session_id="s1", model="gpt-5.4", prompt="hi", messages=messages
+            session_id="s1", model="gpt-5.5", prompt="hi", messages=messages
         )
     )
-    content = first.choices[0].message.content
-    # The first turn carries the system prompt so Codex sees the agent identity.
-    assert "SYSTEM INSTRUCTIONS" in content
-    assert "You are Janus, a personal assistant." in content
+    # The system prompt is thread metadata, not conversation text.
+    assert "SYSTEM INSTRUCTIONS" not in first.choices[0].message.content
+    assert (
+        backend.codex.thread_start_kwargs[0]["developer_instructions"]
+        == "You are Janus, a personal assistant."
+    )
 
     second = asyncio.run(
         backend.run_native(
             session_id="s1",
-            model="gpt-5.4",
+            model="gpt-5.5",
             prompt="again",
             messages=messages + [{"role": "user", "content": "again"}],
         )
     )
-    # Subsequent turns on the persistent thread must NOT re-send the system prompt.
+    # Unlike the old behavior, the persona IS re-applied every turn (via resume),
+    # so it stays in the compaction-preserved prefix.
     assert "SYSTEM INSTRUCTIONS" not in second.choices[0].message.content
+    assert (
+        backend.codex.thread_resume_kwargs[0]["developer_instructions"]
+        == "You are Janus, a personal assistant."
+    )
 
 
 def test_codex_drop_session_forgets_thread_and_persists(mock_codex, tmp_path):

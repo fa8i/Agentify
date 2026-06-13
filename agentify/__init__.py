@@ -14,7 +14,7 @@ from agentify.memory.interfaces import MemoryAddress
 from agentify.memory.policies import MemoryPolicy
 from agentify.memory.stores import InMemoryStore
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 
 __all__ = [
     "Agent",
