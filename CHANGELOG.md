@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-06-13
+
+### Added
+- **Per-Session Runtime MCP Bridge**: Tools, timeouts, and memory-bound executors are now registered on the runtime MCP bridge per session (`register_session`), so concurrent turns for different Agentify sessions on the same Codex backend are fully isolated. The legacy single-session bridge API keeps working.
+- **Durable Codex Thread Mapping**: New `client_config_override={"thread_map_path": ...}` persists the session → Codex thread ID mapping as a JSON file, so `memory_mode="codex_thread"` sessions survive process restarts (Codex threads themselves are persisted by the CLI under `~/.codex/`).
+- **Codex Thread Recovery**: If a mapped Codex thread no longer exists, Agentify logs a warning and transparently starts a new thread for that session; transient resume errors are still raised so context is never silently discarded.
+- **Native Thread Introspection**: `CodexThreadBackend.get_thread_id(session_id)` and `await CodexThreadBackend.read_session_history(session_id)` expose the native Codex thread state (`ThreadReadResponse`).
+- **Typed Codex Errors**: New actionable exception hierarchy (`CodexAuthError`, `CodexCLINotFoundError`, `CodexModelNotSupportedError`, `CodexUsageLimitError`, `CodexMCPStartupError`, `CodexToolNotFoundError`, `CodexEmptyTurnError`, `CodexStreamTimeoutError`), all carrying retry metadata honored by `BaseAgent`.
+- **MCP Startup Diagnostics**: When a Codex turn completes without reconstructible text, the error now reports whether the runtime MCP bridge ever received a connection and (best effort) which MCP servers/tools Codex can see via `mcpServerStatus/list`.
+- **Real-Codex Test Suite & Benchmark**: Env-gated E2E tests against real ChatGPT OAuth (`AGENTIFY_CODEX_E2E=1`, plus `AGENTIFY_CODEX_E2E_SLOW=1` for a >30s tool regression test) and `scripts/benchmark_codex_memory_modes.py` to compare memory modes.
+
+### Changed
+- **Codex Memory Mode Guidance**: Documentation now explains how Codex thread memory works (storage under `~/.codex/`, persistence, auto-compaction) and recommends `memory_mode="codex_thread"` for interactive assistants (~1.5–1.7x faster per turn in benchmarks; the gap grows with history length).
+- **Agentify Memory Preamble**: Hardened the prompt preamble used by `memory_mode="agentify"` so the model no longer leaks the memory instructions into its replies.
+- **Stable Session Keys**: Native backends now receive `MemoryAddress.key_str()` as the session key instead of an unstable fallback.
+
+### Fixed
+- **Transient Codex Errors No Longer Abort Turns**: Codex `error` events are parsed from their real payload (`ErrorNotification.error` / `willRetry`); errors Codex retries internally are recorded as warnings instead of failing turns that complete successfully.
+- **Slow Tools Over MCP**: The runtime MCP proxy socket timeout is now derived from `tool_timeout` (`--call-timeout`), so tools slower than 30 seconds return their structured result instead of killing the proxy connection. Validated against real Codex with a 35s tool.
+- **MCP Tool Config Never Silently Dropped**: The `thread_start` compatibility fallback no longer discards MCP tool configuration on older SDKs; it raises an actionable upgrade error instead.
+- **Error Classification**: `codex_error_info` root models are unwrapped; `unauthorized` (OAuth missing/expired → run `codex login`) and `contextWindowExceeded` are now classified; a missing `codex` binary raises an installation hint instead of a raw `FileNotFoundError`.
+
 ## [0.5.0] - 2026-06-02
 
 ### Added
